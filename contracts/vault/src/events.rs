@@ -355,7 +355,7 @@ pub fn event_swept(env: &Env) -> Symbol {
 /// to enable explicit version handling by indexers while preserving the
 /// original first-slot byte identity for backward compatibility.
 pub fn event_version_v1(env: &Env) -> Symbol {
-    Symbol::new(env, "callora.v1")
+    Symbol::new(env, "callora_v1")
 }
 
 #[cfg(test)]

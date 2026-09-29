@@ -145,8 +145,8 @@ fn setup_funded_vault_with_min(
         &Some(owner.clone()),
         &Some(min_deposit),
         &None::<Address>,
-        &max_deduct,
-        &settlement,
+        &Some(max_deduct),
+        &Some(settlement.clone()),
     );
     usdc_admin.mint(&vault_addr, &on_ledger);
 

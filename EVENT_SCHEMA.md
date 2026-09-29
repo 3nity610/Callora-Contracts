@@ -21,6 +21,29 @@ Each module exports one `pub fn event_*(&env) -> Symbol` function per topic and 
 a `#[cfg(test)]` snapshot block asserting byte-level identity to the original literal.
 No topic strings were renamed; this refactor is a zero-semantic-change migration.
 
+## Change Note (2026-09) — Issue #1118: version topic added to six vault events
+
+Six vault events previously published without the `"callora_v1"` version marker at
+topic[1]. Indexers filtering on the version topic were silently dropping these
+fund-moving events. All six now carry `"callora_v1"` at topic[1]:
+
+| Event | Function | Old topic count | New topic count |
+|-------|----------|-----------------|-----------------|
+| `withdraw` | `withdraw()` | 2 | 3 |
+| `withdraw_to` | `withdraw_to()` | 3 | 4 |
+| `distribute` | `distribute()` | 2 | 3 |
+| `rescue_funds` | `admin_rescue()` | 3 | 4 |
+| `reserve_cap_set` | `set_reserve_cap()` | 3 | 4 |
+| `request_id_pruned` | `prune_processed_requests()` | 2 | 3 |
+
+The version symbol string is `"callora_v1"` (underscore, not dot — Soroban `Symbol`
+only allows `a-zA-Z0-9_`; the previous `"callora.v1"` string was invalid and would
+panic when passed through the Soroban host's XDR layer).
+
+**Breaking change for indexers:** Any consumer matching on topic count or positional
+topic index for these six events must update its filters. The `"callora_v1"` symbol
+is always at topic[1]; the subject address (owner/caller/token) shifts to topic[2]+.
+
 
 ## Contract: Callora Vault
 
@@ -106,21 +129,16 @@ transfer, or `deduct` event is emitted.
 
 Emitted when the vault owner withdraws to their own address.
 
-| Field         | Location | Type   | Description                                          |
-|---------------|----------|--------|------------------------------------------------------|
-| topic 0       | topics   | Symbol | `"withdraw"`                                         |
-| topic 1       | topics   | Address| vault owner                                          |
-| `amount`      | data     | i128   | amount withdrawn in USDC micro-units                 |
-| `new_balance` | data     | i128   | vault balance after withdrawal                       |
-| Index   | Location | Type         | Description           |
-|---------|----------|--------------|-----------------------|
-| topic 0 | topics   | Symbol       | `"withdraw"`          |
-| topic 1 | topics   | Address      | vault owner           |
-| data    | data     | (i128, i128) | (amount, new_balance) |
+| Index   | Location | Type         | Description                         |
+|---------|----------|--------------|-------------------------------------|
+| topic 0 | topics   | Symbol       | `"withdraw"`                        |
+| topic 1 | topics   | Symbol       | `"callora_v1"` (version marker)     |
+| topic 2 | topics   | Address      | vault owner                         |
+| data    | data     | (i128, i128) | (amount, new_balance)               |
 
 ```json
 {
-  "topics": ["withdraw", "GOWNER..."],
+  "topics": ["withdraw", "callora_v1", "GOWNER..."],
   "data": [200000, 700000]
 }
 ```
@@ -131,23 +149,17 @@ Emitted when the vault owner withdraws to their own address.
 
 Emitted when the vault owner withdraws to a designated recipient.
 
-| Field         | Location | Type   | Description                                          |
-|---------------|----------|--------|------------------------------------------------------|
-| topic 0       | topics   | Symbol | `"withdraw_to"`                                      |
-| topic 1       | topics   | Address| vault owner                                          |
-| topic 2       | topics   | Address| recipient `to`                                       |
-| `amount`      | data     | i128   | amount withdrawn in USDC micro-units                 |
-| `new_balance` | data     | i128   | vault balance after withdrawal                       |
-| Index   | Location | Type         | Description           |
-|---------|----------|--------------|-----------------------|
-| topic 0 | topics   | Symbol       | `"withdraw_to"`       |
-| topic 1 | topics   | Address      | vault owner           |
-| topic 2 | topics   | Address      | recipient             |
-| data    | data     | (i128, i128) | (amount, new_balance) |
+| Index   | Location | Type         | Description                         |
+|---------|----------|--------------|-------------------------------------|
+| topic 0 | topics   | Symbol       | `"withdraw_to"`                     |
+| topic 1 | topics   | Symbol       | `"callora_v1"` (version marker)     |
+| topic 2 | topics   | Address      | vault owner                         |
+| topic 3 | topics   | Address      | recipient                           |
+| data    | data     | (i128, i128) | (amount, new_balance)               |
 
 ```json
 {
-  "topics": ["withdraw_to", "GOWNER...", "GRECIPIENT..."],
+  "topics": ["withdraw_to", "callora_v1", "GOWNER...", "GRECIPIENT..."],
   "data": [150000, 550000]
 }
 ```
@@ -471,6 +483,97 @@ Emitted when the nominee accepts the admin role.
 | topic 1 | topics   | Address| old admin     |
 | topic 2 | topics   | Address| new admin     |
 | data    | data     | ()     | empty         |
+
+---
+
+### `distribute` (vault)
+
+Emitted when the admin distributes on-ledger USDC surplus to a recipient via
+`distribute()`. Updated in Issue #1118 to include the version marker at topic[1].
+
+| Index   | Location | Type    | Description                          |
+|---------|----------|---------|--------------------------------------|
+| topic 0 | topics   | Symbol  | `"distribute"`                       |
+| topic 1 | topics   | Symbol  | `"callora_v1"` (version marker)      |
+| topic 2 | topics   | Address | `to` — recipient address             |
+| data    | data     | i128    | `amount` in USDC micro-units         |
+
+```json
+{
+  "topics": ["distribute", "callora_v1", "GRECIPIENT..."],
+  "data": 1000000
+}
+```
+
+---
+
+### `rescue_funds`
+
+Emitted when the admin rescues tokens from the vault via `admin_rescue()`.
+Updated in Issue #1118 to include the version marker at topic[1].
+
+| Index   | Location | Type    | Description                               |
+|---------|----------|---------|-------------------------------------------|
+| topic 0 | topics   | Symbol  | `"rescue_funds"`                          |
+| topic 1 | topics   | Symbol  | `"callora_v1"` (version marker)           |
+| topic 2 | topics   | Address | `caller` — admin address                  |
+| topic 3 | topics   | Address | `token_address` — token being rescued     |
+| data    | data     | (Address, i128) | `(to, amount)` — destination and amount |
+
+```json
+{
+  "topics": ["rescue_funds", "callora_v1", "GADMIN...", "GTOKEN..."],
+  "data": ["GRECIPIENT...", 3000000]
+}
+```
+
+---
+
+### `reserve_cap_set`
+
+Emitted when the owner sets or updates the deposit reserve cap for a token via
+`set_reserve_cap()`. Updated in Issue #1118 to include the version marker at topic[1].
+
+| Index   | Location | Type         | Description                             |
+|---------|----------|--------------|-----------------------------------------|
+| topic 0 | topics   | Symbol       | `"reserve_cap_set"`                     |
+| topic 1 | topics   | Symbol       | `"callora_v1"` (version marker)         |
+| topic 2 | topics   | Address      | `caller` — owner address                |
+| topic 3 | topics   | Address      | `token` — token the cap applies to      |
+| data    | data     | (Option\<i128\>, i128) | `(prev_cap, new_cap)` — previous cap (None if unset) and new cap |
+
+```json
+{
+  "topics": ["reserve_cap_set", "callora_v1", "GOWNER...", "GTOKEN..."],
+  "data": [null, 999999]
+}
+```
+
+---
+
+### `request_id_pruned`
+
+Emitted once per successfully removed idempotency marker when the owner calls
+`prune_processed_requests()`. Updated in Issue #1118 to include the version marker
+at topic[1].
+
+| Index   | Location | Type    | Description                              |
+|---------|----------|---------|------------------------------------------|
+| topic 0 | topics   | Symbol  | `"request_id_pruned"`                    |
+| topic 1 | topics   | Symbol  | `"callora_v1"` (version marker)          |
+| topic 2 | topics   | Symbol  | `id` — the pruned request ID             |
+| data    | data     | ()      | empty                                    |
+
+```json
+{
+  "topics": ["request_id_pruned", "callora_v1", "req_abc123"],
+  "data": null
+}
+```
+
+**Indexer note:** One `request_id_pruned` event is emitted per marker that was
+actually found and removed. IDs not present in storage are silently skipped (no
+event).
 
 ---
 
@@ -1468,3 +1571,5 @@ operational edge cases (off-chain payment reconciliation, dispute resolution).
 | 0.2.0   | vault         | Added `swept` event on `sweep_idle_balance()` (Issue #415)  |
 | 0.2.0   | revenue-pool  | Added `emergency_drain_proposed`, `emergency_drain_executed`, `emergency_drain_cancelled` events |
 | 0.2.0   | settlement    | Added `developer_min_balance_changed` event on `set_developer_min_balance()` (Issue #633) |
+| 0.3.0   | vault         | Added `"callora_v1"` version marker at topic[1] for `withdraw`, `withdraw_to`, `distribute`, `rescue_funds`, `reserve_cap_set`, `request_id_pruned` (Issue #1118) |
+| 0.3.0   | vault         | Version symbol renamed `"callora.v1"` → `"callora_v1"` (dot not allowed in Soroban Symbol charset) |
