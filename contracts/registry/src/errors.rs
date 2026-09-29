@@ -26,4 +26,6 @@ pub enum RegistryError {
     /// Metadata is empty, exceeds the byte bound, or contains invalid
     /// (non-visible-ASCII / control / whitespace-delimited) encodings (code 10).
     InvalidMetadata = 10,
+    /// New developer address is invalid (e.g. zero address) (code 11).
+    InvalidDeveloper = 11,
 }

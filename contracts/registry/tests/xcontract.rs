@@ -1,3 +1,4 @@
+
 //! Cross-contract call safety tests for `callora-registry`.
 //!
 //! Verifies that when an external callee reverts or panics during registration,
@@ -38,6 +39,26 @@ pub mod ok_catalog {
             _metadata: String,
         ) {
         }
+    }
+}
+
+pub mod update_catalog {
+    use super::*;
+
+    #[contract]
+    pub struct UpdateCatalog;
+
+    #[contractimpl]
+    impl UpdateCatalog {
+        pub fn put_offering(
+            _env: Env,
+            _registry: Address,
+            _offering_id: String,
+            _metadata: String,
+        ) {
+        }
+
+        pub fn remove_offering(_env: Env, _registry: Address, _offering_id: String) {}
     }
 }
 
@@ -376,4 +397,107 @@ fn registry_publishes_through_identity_enforcing_catalog() {
     // The identity-enforcing catalog recorded exactly one verified offering.
     let catalog_client = identity_catalog::IdentityCatalogClient::new(&env, &catalog_id);
     assert_eq!(catalog_client.published_count(), 1);
+}
+
+// ---------------------------------------------------------------------------
+// Update / transfer / deregister (issue: support offering updates)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn update_offering_metadata_revalidates_and_emits() {
+    let env = Env::default();
+    let catalog = env.register(update_catalog::UpdateCatalog, ());
+    let (admin, client, developer) = setup_registry(&env, catalog);
+
+    let oid = offering_id(&env, "upd");
+    let meta = metadata(&env);
+    client.register_offering(&admin, &developer, &oid, &meta);
+
+    let new_meta = String::from_str(&env, "ipfs://newcid");
+    client.update_offering_metadata(&admin, &oid, &new_meta);
+
+    let record = client.get_offering(&oid);
+    assert_eq!(record.metadata, new_meta);
+    assert_eq!(client.registered_count(), 1);
+}
+
+#[test]
+fn update_offering_metadata_unknown_id_returns_not_found() {
+    let env = Env::default();
+    let catalog = env.register(update_catalog::UpdateCatalog, ());
+    let (admin, client, _developer) = setup_registry(&env, catalog);
+
+    let oid = offering_id(&env, "missing");
+    let new_meta = metadata(&env);
+    let result = client.try_update_offering_metadata(&admin, &oid, &new_meta);
+    assert!(
+        matches!(result, Err(Ok(RegistryError::OfferingNotFound))),
+        "expected OfferingNotFound, got {:?}",
+        result
+    );
+}
+
+#[test]
+fn transfer_offering_changes_developer() {
+    let env = Env::default();
+    let catalog = env.register(update_catalog::UpdateCatalog, ());
+    let (admin, client, developer) = setup_registry(&env, catalog);
+
+    let oid = offering_id(&env, "xfer");
+    let meta = metadata(&env);
+    client.register_offering(&admin, &developer, &oid, &meta);
+
+    let new_dev = Address::generate(&env);
+    client.transfer_offering(&admin, &oid, &new_dev);
+
+    let record = client.get_offering(&oid);
+    assert_eq!(record.developer, new_dev);
+}
+
+#[test]
+fn transfer_offering_unknown_id_returns_not_found() {
+    let env = Env::default();
+    let catalog = env.register(update_catalog::UpdateCatalog, ());
+    let (admin, client, _developer) = setup_registry(&env, catalog);
+
+    let oid = offering_id(&env, "xfer-missing");
+    let new_dev = Address::generate(&env);
+    let result = client.try_transfer_offering(&admin, &oid, &new_dev);
+    assert!(
+        matches!(result, Err(Ok(RegistryError::OfferingNotFound))),
+        "expected OfferingNotFound, got {:?}",
+        result
+    );
+}
+
+#[test]
+fn deregister_offering_removes_record_and_decrements_count() {
+    let env = Env::default();
+    let catalog = env.register(update_catalog::UpdateCatalog, ());
+    let (admin, client, developer) = setup_registry(&env, catalog);
+
+    let oid = offering_id(&env, "del");
+    let meta = metadata(&env);
+    client.register_offering(&admin, &developer, &oid, &meta);
+    assert_eq!(client.registered_count(), 1);
+
+    client.deregister_offering(&admin, &oid);
+
+    assert_eq!(client.registered_count(), 0);
+    assert!(!client.is_offering_registered(&oid));
+}
+
+#[test]
+fn deregister_offering_unknown_id_returns_not_found() {
+    let env = Env::default();
+    let catalog = env.register(update_catalog::UpdateCatalog, ());
+    let (admin, client, _developer) = setup_registry(&env, catalog);
+
+    let oid = offering_id(&env, "del-missing");
+    let result = client.try_deregister_offering(&admin, &oid);
+    assert!(
+        matches!(result, Err(Ok(RegistryError::OfferingNotFound))),
+        "expected OfferingNotFound, got {:?}",
+        result
+    );
 }
