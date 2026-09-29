@@ -538,22 +538,21 @@ impl CalloraSettlement {
 
         let usdc_address = Self::get_usdc_token(env.clone())?;
 
-        // Enforce per-developer minimum balance.
-        let dev_balance_key = StorageKey::DeveloperBalance(developer.clone(), usdc_address.clone());
-        let dev_balance: i128 = env
-            .storage()
-            .persistent()
-            .get(&dev_balance_key)
-            .unwrap_or(0);
-        let remaining = dev_balance
-            .checked_sub(amount)
-            .ok_or(SettlementError::InsufficientDeveloperBalance)?;
-        limits::check_min_balance(&env, &developer, remaining)?;
+        // --- CHECKS ---
+        // Single read of the developer's per-token balance (removes the duplicate
+        // read that previously appeared as both `dev_balance_key`/`dev_balance`
+        // and `balance_key`/`current_balance` with identical keys).
         let balance_key = StorageKey::DeveloperBalance(developer.clone(), usdc_address.clone());
         let current_balance: i128 = env.storage().persistent().get(&balance_key).unwrap_or(0);
         if amount > current_balance {
             return Err(SettlementError::InsufficientDeveloperBalance);
         }
+
+        // Compute the post-withdrawal balance and enforce the developer minimum.
+        let new_balance = current_balance
+            .checked_sub(amount)
+            .ok_or(SettlementError::DeveloperBalanceUnderflow)?;
+        limits::check_min_balance(&env, &developer, new_balance)?;
 
         let today = env.ledger().timestamp() / 86400;
         let today_key = StorageKey::WithdrawalToday(developer.clone());
@@ -585,16 +584,15 @@ impl CalloraSettlement {
             }
         }
 
-        let new_balance = current_balance
-            .checked_sub(amount)
-            .ok_or(SettlementError::DeveloperBalanceUnderflow)?;
-
         let usdc = token::Client::new(&env, &usdc_address);
         if usdc.balance(&contract_address) < amount {
             return Err(SettlementError::InsufficientContractBalance);
         }
-        usdc.transfer(&contract_address, &recipient, &amount);
 
+        // --- EFFECTS (persist all state mutations before the external call) ---
+        // CEI: write the reduced balance and updated daily-withdrawal counter
+        // here so that any re-entrant call via the token contract observes the
+        // already-reduced balance and cannot withdraw a second time.
         env.storage().persistent().set(&balance_key, &new_balance);
         env.storage()
             .persistent()
@@ -608,6 +606,9 @@ impl CalloraSettlement {
         env.storage()
             .persistent()
             .extend_ttl(&today_key, 50000, 50000);
+
+        // --- INTERACTION (external token transfer happens last) ---
+        usdc.transfer(&contract_address, &recipient, &amount);
 
         events::emit_developer_withdraw(
             &env,
@@ -1464,6 +1465,8 @@ impl CalloraSettlement {
 
 #[cfg(test)]
 mod test_freeze;
+#[cfg(test)]
+mod test_reentrancy;
 
 #[cfg(test)]
 // Legacy suites targeting the pre-nonce payment API are intentionally not
