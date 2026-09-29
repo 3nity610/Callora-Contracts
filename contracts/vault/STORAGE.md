@@ -99,7 +99,8 @@ pub enum StorageKey {
     Metadata(String),              // String (offering metadata by offering_id)
     PendingOwner,                  // Address
     PendingAdmin,                  // Address
-    DepositorList,                 // Vec<Address>
+    Depositor(Address),            // bool — persistent storage, allowlist membership
+    DepositorIndex,                // Vec<Address> — persistent storage, paginated enumeration index
     ContractVersion,               // BytesN<32>
     ProcessedRequest(Symbol),      // bool — persistent storage, idempotency marker
 }
@@ -121,7 +122,8 @@ pub enum StorageKey {
 | `OfferingIndex`            | Instance      | `Vec<String>`     | Ordered list of offering IDs with stored prices        | `set_price()`, `remove_price()`, `list_prices()`                           |
 | `PendingOwner`             | Instance      | `Address`         | Two-step ownership transfer nominee                    | `transfer_ownership()`, `accept_ownership()`                               |
 | `PendingAdmin`             | Instance      | `Address`         | Two-step admin transfer nominee                        | `set_admin()`, `accept_admin()`                                            |
-| `DepositorList`            | Instance      | `Vec<Address>`    | Allowed depositor addresses                            | `set_allowed_depositor()`, `get_allowed_depositors()`                      |
+| `Depositor(Address)`       | **Persistent** | `bool`           | Allowlist membership for a depositor (O(1) lookup)     | `set_allowed_depositor()`, `remove_allowed_depositor()`, `is_authorized_depositor()` |
+| `DepositorIndex`           | **Persistent** | `Vec<Address>`   | Paginated enumeration index of allowed depositors      | `set_allowed_depositor()`, `remove_allowed_depositor()`, `get_allowed_depositors()` |
 | `ContractVersion`          | Instance      | `BytesN<32>`      | WASM hash set by `upgrade()`                           | `upgrade()`, `version()`                                                   |
 | `ProcessedRequest(Symbol)` | **Temporary** | `bool`            | Idempotency marker for a processed deduct `request_id` | Written by `deduct()` / `batch_deduct()`; read by `is_request_processed()` |
 | Key Variant | Storage Tier | Value Type | Description | Access |
