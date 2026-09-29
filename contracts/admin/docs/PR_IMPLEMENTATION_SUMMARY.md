@@ -1,5 +1,11 @@
 # Admin Lifecycle Events — Implementation Summary (Issue #832)
 
+> **Status (issue #1248):** this summary covers the `admin` lifecycle surface
+> only. The `limits` module that ships in the same crate is **experimental and
+> unwired** (no consumer), and its per-account cap concept is duplicated by the
+> wired `contracts/yield` limits contract. See `docs/storage.md` and
+> `contracts/yield/YIELD_LIMITS.md`.
+
 ## What was added
 
 A new Soroban crate `contracts/admin` exposing:

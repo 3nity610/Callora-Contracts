@@ -1,5 +1,23 @@
 //! Per-account limits enforcement for bets, positions, and subscriptions.
 //!
+//! # Status and consumers (issue #1248)
+//!
+//! **Experimental / unwired.** No contract in this workspace depends on
+//! `callora-admin`, and this module provides free functions only — it exposes
+//! no `#[contract]` entrypoints — so nothing can reach it on-chain yet. The
+//! *bet* / *position* / *subscription* terms are placeholders pending a
+//! concrete Callora product definition; they do not currently map to any
+//! shipped Callora flow.
+//!
+//! The same per-account cap concept is already implemented, tested, and wired
+//! up as a standalone contract in `contracts/yield` (`CalloraYieldLimits`; see
+//! `contracts/yield/YIELD_LIMITS.md` and `contracts/yield/src/limits.rs`).
+//! Key differences: `yield` stores per-account cap overrides in **instance**
+//! storage and reports `YieldLimitError`, whereas this module stores both caps
+//! and counters in **persistent** storage and reports
+//! [`crate::errors::AdminLimitError`]. Consolidate or delete one of the two
+//! before either gains a consumer.
+//!
 //! # Problem
 //!
 //! Without per-account caps, a single account can open an unbounded number
