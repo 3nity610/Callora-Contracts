@@ -18,6 +18,7 @@ use soroban_sdk::contracterror;
 /// | 8    | AssetNotApproved    | Payment asset is not approved for escrow creation            |
 /// | 9    | InvalidInput        | A supplied input is malformed or forbidden                    |
 /// | 10   | EscrowExists        | Escrow already exists for the given payment asset and recipient |
+/// | 11   | Paused              | Operation is rejected because the contract is paused         |
 #[contracterror]
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[repr(u32)]
@@ -42,4 +43,6 @@ pub enum EscrowError {
     InvalidInput = 9,
     /// Escrow already exists for the given payment asset and recipient (code 10).
     EscrowExists = 10,
+    /// Operation is rejected because the contract is paused (code 11).
+    Paused = 11,
 }

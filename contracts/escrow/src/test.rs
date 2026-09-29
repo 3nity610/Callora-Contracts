@@ -259,8 +259,9 @@ fn test_release_and_pause_are_independently_cooled() {
     // pause and rotate are distinct tags — not blocked by release's window.
     client.pause(&admin);
     client.rotate_signer(&admin, &new_signer);
+    client.unpause(&admin);
 
-    // But release is still blocked.
+    // But release is still blocked by its own cooldown.
     let res = client.try_release(&admin, &recipient);
     assert_eq!(res, Err(Ok(EscrowError::CooldownActive)));
 }
@@ -619,4 +620,122 @@ fn test_approval_registry_is_scoped_per_instance() {
     client1.add_approved_asset(&admin, &asset);
     assert!(client1.is_asset_approved(&asset));
     assert!(!client2.is_asset_approved(&asset));
+}
+
+// ===========================================================================
+// Pause circuit breaker enforcement (issue #1181)
+// ===========================================================================
+
+/// Verify `EscrowError::Paused` has discriminant 11.
+#[test]
+fn test_escrow_error_paused_discriminant() {
+    assert_eq!(EscrowError::Paused as u32, 11);
+}
+
+/// Escrow creation fails with `EscrowError::Paused` when the contract is paused.
+#[test]
+fn test_create_escrow_fails_while_paused() {
+    let (env, admin, _signer, client) = setup(Some(60));
+    let asset = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    client.add_approved_asset(&admin, &asset);
+
+    client.pause(&admin);
+    assert!(client.is_paused());
+
+    let res = client.try_create_escrow(&admin, &asset, &recipient, &1000);
+    assert_eq!(res, Err(Ok(EscrowError::Paused)));
+    assert!(client.get_escrow(&asset, &recipient).is_none());
+}
+
+/// Release fails with `EscrowError::Paused` when the contract is paused.
+#[test]
+fn test_release_fails_while_paused() {
+    let (env, admin, _signer, client) = setup(Some(60));
+    let recipient = Address::generate(&env);
+
+    client.pause(&admin);
+    assert!(client.is_paused());
+
+    let res = client.try_release(&admin, &recipient);
+    assert_eq!(res, Err(Ok(EscrowError::Paused)));
+}
+
+/// Unpausing restores both `create_escrow` and `release` functionality.
+#[test]
+fn test_unpause_restores_create_escrow_and_release() {
+    let (env, admin, _signer, client) = setup(Some(60));
+    let asset = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let release_recipient = Address::generate(&env);
+    client.add_approved_asset(&admin, &asset);
+
+    // Pause contract
+    client.pause(&admin);
+    assert!(client.is_paused());
+
+    // Both fund-affecting actions are blocked while paused
+    assert_eq!(
+        client.try_create_escrow(&admin, &asset, &recipient, &1000),
+        Err(Ok(EscrowError::Paused))
+    );
+    assert_eq!(
+        client.try_release(&admin, &release_recipient),
+        Err(Ok(EscrowError::Paused))
+    );
+
+    // Unpause restores both
+    client.unpause(&admin);
+    assert!(!client.is_paused());
+
+    client.create_escrow(&admin, &asset, &recipient, &1000);
+    let record = client.get_escrow(&asset, &recipient).unwrap();
+    assert_eq!(record.amount, 1000);
+
+    client.release(&admin, &release_recipient);
+    assert_eq!(client.get_signer(), release_recipient);
+}
+
+/// Administrative functions and views remain allowed while paused.
+#[test]
+fn test_admin_functions_and_views_allowed_while_paused() {
+    let (env, admin, signer, client) = setup(Some(60));
+    let asset1 = Address::generate(&env);
+    let asset2 = Address::generate(&env);
+    let new_signer = Address::generate(&env);
+    let new_admin = Address::generate(&env);
+
+    client.pause(&admin);
+    assert!(client.is_paused());
+
+    // Views remain functional
+    assert_eq!(client.get_admin(), admin);
+    assert_eq!(client.get_signer(), signer);
+    assert_eq!(client.get_cooldown(), 60);
+    assert_eq!(client.get_pending_admin(), None);
+    assert!(!client.is_asset_approved(&asset1));
+
+    // Admin config remains functional
+    client.set_cooldown(&admin, &120);
+    assert_eq!(client.get_cooldown(), 120);
+
+    client.add_approved_asset(&admin, &asset1);
+    assert!(client.is_asset_approved(&asset1));
+    client.add_approved_asset(&admin, &asset2);
+    client.remove_approved_asset(&admin, &asset1);
+    assert!(!client.is_asset_approved(&asset1));
+    assert!(client.is_asset_approved(&asset2));
+
+    client.rotate_signer(&admin, &new_signer);
+    assert_eq!(client.get_signer(), new_signer);
+
+    // Two-step admin rotation works while paused
+    client.set_admin(&admin, &new_admin);
+    assert_eq!(client.get_pending_admin(), Some(new_admin.clone()));
+    client.accept_admin(&new_admin);
+    assert_eq!(client.get_admin(), new_admin);
+
+    // New admin can unpause
+    client.unpause(&new_admin);
+    assert!(!client.is_paused());
 }

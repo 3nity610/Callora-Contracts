@@ -12,6 +12,39 @@
 //! action cannot fire within the configured window. See [`admin`] for the
 //! cool-off engine and
 //! [issue #914](https://github.com/CalloraOrg/Callora-Contracts/issues/914).
+//!
+//! ## Circuit Breaker (Pause Mechanism)
+//!
+//! During incidents or emergency maintenance, the contract can be paused by the
+//! admin via [`CalloraEscrow::pause`]. When paused, all fund-affecting entrypoints
+//! fail closed with [`EscrowError::Paused`].
+//!
+//! Administrative and read-only functions remain accessible while paused to allow
+//! diagnostics, remediation, and unpausing.
+//!
+//! ### Pause Operation Matrix
+//!
+//! | Function | Category | Allowed While Paused | Notes |
+//! |---|---|:---:|---|
+//! | [`CalloraEscrow::create_escrow`] | Fund-Affecting | **No** | Rejects with [`EscrowError::Paused`] |
+//! | [`CalloraEscrow::release`] | Fund-Affecting | **No** | Rejects with [`EscrowError::Paused`] |
+//! | [`CalloraEscrow::pause`] | Admin Critical | **Yes** | Cooldown-guarded |
+//! | [`CalloraEscrow::unpause`] | Admin Critical | **Yes** | Restores fund operations |
+//! | [`CalloraEscrow::rotate_signer`] | Admin Critical | **Yes** | Allows key rotation during incident |
+//! | [`CalloraEscrow::set_cooldown`] | Admin Config | **Yes** | Allows cooldown adjustment |
+//! | [`CalloraEscrow::add_approved_asset`] | Admin Config | **Yes** | Asset registry management |
+//! | [`CalloraEscrow::remove_approved_asset`] | Admin Config | **Yes** | Asset registry management |
+//! | [`CalloraEscrow::set_admin`] | Admin Mgmt | **Yes** | Two-step transfer initiation |
+//! | [`CalloraEscrow::accept_admin`] | Admin Mgmt | **Yes** | Two-step transfer completion |
+//! | [`CalloraEscrow::get_admin`] | Read-Only View | **Yes** | Inspection / Diagnostics |
+//! | [`CalloraEscrow::get_pending_admin`] | Read-Only View | **Yes** | Inspection / Diagnostics |
+//! | [`CalloraEscrow::get_signer`] | Read-Only View | **Yes** | Inspection / Diagnostics |
+//! | [`CalloraEscrow::get_cooldown`] | Read-Only View | **Yes** | Inspection / Diagnostics |
+//! | [`CalloraEscrow::cooldown_remaining`] | Read-Only View | **Yes** | Inspection / Diagnostics |
+//! | [`CalloraEscrow::is_ready`] | Read-Only View | **Yes** | Inspection / Diagnostics |
+//! | [`CalloraEscrow::is_paused`] | Read-Only View | **Yes** | Inspection / Diagnostics |
+//! | [`CalloraEscrow::is_asset_approved`] | Read-Only View | **Yes** | Inspection / Diagnostics |
+//! | [`CalloraEscrow::get_escrow`] | Read-Only View | **Yes** | Inspection / Diagnostics |
 
 #[cfg(test)]
 extern crate std;
@@ -150,6 +183,16 @@ impl CalloraEscrow {
     // Admin helpers (internal)
     // -----------------------------------------------------------------------
 
+    /// Verify that the contract is not paused.
+    ///
+    /// Returns [`EscrowError::Paused`] when the contract is currently paused.
+    fn require_not_paused(env: &Env) -> Result<(), EscrowError> {
+        if Self::is_paused(env.clone()) {
+            return Err(EscrowError::Paused);
+        }
+        Ok(())
+    }
+
     /// Read the current admin address from instance storage.
     ///
     /// Returns [`EscrowError::NotInitialized`] when no admin has been set.
@@ -275,6 +318,7 @@ impl CalloraEscrow {
     /// * `recipient` -- Address of the fund recipient.
     ///
     /// # Errors
+    /// * [`EscrowError::Paused`] -- contract is paused.
     /// * [`EscrowError::Unauthorized`] -- caller is not the current admin.
     /// * [`EscrowError::NotInitialized`] -- contract not initialized.
     /// * [`EscrowError::CooldownActive`] -- a `release` ran within the cool-off window.
@@ -282,6 +326,7 @@ impl CalloraEscrow {
     /// # Events
     /// Emits `action` with `caller` as topic and the `"release"` tag as data.
     pub fn release(env: Env, caller: Address, recipient: Address) -> Result<(), EscrowError> {
+        Self::require_not_paused(&env)?;
         Self::require_admin(&env, &caller)?;
         let action = Symbol::new(&env, ACTION_RELEASE);
         admin::guard(&env, &action)?;
@@ -490,6 +535,7 @@ impl CalloraEscrow {
     /// * `amount` -- Escrow amount in payment asset micro-units; must be > 0.
     ///
     /// # Errors
+    /// * [`EscrowError::Paused`] -- contract is paused.
     /// * [`EscrowError::Unauthorized`] -- caller is not the current admin.
     /// * [`EscrowError::NotInitialized`] -- contract not initialized.
     /// * [`EscrowError::InvalidInput`] -- `payment_asset` or `recipient` resolve
@@ -508,6 +554,7 @@ impl CalloraEscrow {
         recipient: Address,
         amount: i128,
     ) -> Result<(), EscrowError> {
+        Self::require_not_paused(&env)?;
         Self::require_admin(&env, &caller)?;
         Self::validate_asset(&env, &payment_asset)?;
         if recipient == env.current_contract_address() {
