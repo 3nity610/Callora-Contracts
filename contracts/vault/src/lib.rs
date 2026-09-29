@@ -426,6 +426,8 @@ impl CalloraVault {
     /// - [`VaultError::ExceedsMaxDeduct`] — `amount > max_deduct`.
     /// - [`VaultError::InsufficientBalance`] — tracked balance < amount.
     /// - [`VaultError::Overflow`] — balance underflow.
+    /// - [`VaultError::SettlementNotSet`] — settlement address is not configured.
+    /// - [`VaultError::NotInitialized`] — USDC token address is not configured.
     ///
     /// ### Events
     /// Emits `deduct` with `caller` as topic and `(amount, new_balance)` as data.
@@ -454,6 +456,13 @@ impl CalloraVault {
         {
             return Err(VaultError::Paused);
         }
+        let settlement_addr = Self::require_settlement(&env)?;
+        let usdc_addr = env
+            .storage()
+            .instance()
+            .get::<_, Address>(&DataKey::UsdcToken)
+            .ok_or(VaultError::NotInitialized)?;
+
         let min_dep = env
             .storage()
             .instance()
@@ -488,17 +497,6 @@ impl CalloraVault {
             (amount, new_bal),
         );
 
-        let settlement_addr = env
-            .storage()
-            .instance()
-            .get::<_, Address>(&DataKey::Settlement)
-            .unwrap_or_else(|| panic!("Settlement not set"));
-
-        let usdc_addr = env
-            .storage()
-            .instance()
-            .get::<_, Address>(&DataKey::UsdcToken)
-            .unwrap_or_else(|| panic!("USDC Token not set"));
         let usdc_client = token::Client::new(&env, &usdc_addr);
         usdc_client.transfer(&env.current_contract_address(), &settlement_addr, &amount);
 
@@ -545,6 +543,8 @@ impl CalloraVault {
     /// - [`VaultError::ExceedsMaxDeduct`] — any item exceeds `max_deduct`.
     /// - [`VaultError::InsufficientBalance`] — aggregate total > tracked balance.
     /// - [`VaultError::Overflow`] — total accumulation overflows `i128`.
+    /// - [`VaultError::SettlementNotSet`] — settlement address is not configured.
+    /// - [`VaultError::NotInitialized`] — USDC token address is not configured.
     ///
     /// ### Events
     /// Emits one `deduct` event per item with `caller` as topic carrying
@@ -574,6 +574,12 @@ impl CalloraVault {
         {
             return Err(VaultError::Paused);
         }
+        let settlement_addr = Self::require_settlement(&env)?;
+        let usdc_addr = env
+            .storage()
+            .instance()
+            .get::<_, Address>(&DataKey::UsdcToken)
+            .ok_or(VaultError::NotInitialized)?;
 
         // Boundary / batch-limit preconditions — checked before mutation.
         if items.is_empty() {
@@ -625,18 +631,8 @@ impl CalloraVault {
             return Err(VaultError::InsufficientBalance);
         }
 
-        let settlement_addr = env
-            .storage()
-            .instance()
-            .get::<_, Address>(&DataKey::Settlement)
-            .unwrap_or_else(|| panic!("Settlement not set"));
         let settlement_client = settlement::Client::new(&env, &settlement_addr);
 
-        let usdc_addr = env
-            .storage()
-            .instance()
-            .get::<_, Address>(&DataKey::UsdcToken)
-            .unwrap_or_else(|| panic!("USDC Token not set"));
         let usdc_client = token::Client::new(&env, &usdc_addr);
 
         // All preconditions passed. Now the value-conserving mutation pair is

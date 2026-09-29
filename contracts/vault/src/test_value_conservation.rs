@@ -153,6 +153,30 @@ fn setup_funded_vault_with_min(
     (client, owner, usdc_client, usdc_admin, settlement)
 }
 
+fn setup_vault_with_optional_settlement(
+    env: &Env,
+    settlement: Option<Address>,
+) -> (CalloraVaultClient<'_>, Address, token::Client<'_>) {
+    let owner = Address::generate(env);
+    let (vault_addr, client) = create_vault(env);
+    let (usdc, usdc_client, usdc_admin) = create_usdc(env, &owner);
+
+    env.mock_all_auths();
+    client.init(
+        &owner,
+        &usdc,
+        &Some(1_000i128),
+        &Some(owner.clone()),
+        &Some(1i128),
+        &None::<Address>,
+        &Some(1_000i128),
+        &settlement,
+    );
+    usdc_admin.mint(&vault_addr, &1_000i128);
+
+    (client, owner, usdc_client)
+}
+
 fn items_from(env: &Env, amounts: &[i128]) -> Vec<(i128, u64)> {
     let mut v: Vec<(i128, u64)> = Vec::new(env);
     for (i, a) in amounts.iter().enumerate() {
@@ -314,6 +338,66 @@ fn batch_deduct_total_aggregation_is_checked() {
     assert_eq!(before.vault_tracked, after.vault_tracked);
     assert_eq!(before.vault_usdc, after.vault_usdc);
     assert_eq!(before.settlement_usdc, after.settlement_usdc);
+}
+
+#[test]
+fn deduct_without_settlement_returns_error_before_mutation() {
+    let env = Env::default();
+    let (client, owner, usdc) = setup_vault_with_optional_settlement(&env, None);
+    env.mock_all_auths();
+    let event_count = env.events().all().len();
+
+    let result = client.try_deduct(&owner, &100i128, &1u64);
+
+    assert!(is_vault_err(result, VaultError::SettlementNotSet as u32));
+    assert_eq!(client.balance(), 1_000);
+    assert_eq!(usdc.balance(&client.address), 1_000);
+    assert_eq!(env.events().all().len(), event_count);
+}
+
+#[test]
+fn batch_deduct_without_settlement_returns_error_before_mutation() {
+    let env = Env::default();
+    let (client, owner, usdc) = setup_vault_with_optional_settlement(&env, None);
+    env.mock_all_auths();
+    let event_count = env.events().all().len();
+    let items = items_from(&env, &[100]);
+
+    let result = client.try_batch_deduct(&owner, &items);
+
+    assert!(is_vault_err(result, VaultError::SettlementNotSet as u32));
+    assert_eq!(client.balance(), 1_000);
+    assert_eq!(usdc.balance(&client.address), 1_000);
+    assert_eq!(env.events().all().len(), event_count);
+}
+
+#[test]
+fn deduct_and_batch_deduct_without_usdc_return_not_initialized() {
+    let env = Env::default();
+    let settlement = Address::generate(&env);
+    let (client, owner, usdc) =
+        setup_vault_with_optional_settlement(&env, Some(settlement));
+    env.as_contract(&client.address, || {
+        env.storage().instance().remove(&DataKey::UsdcToken);
+    });
+    env.mock_all_auths();
+    let event_count = env.events().all().len();
+
+    let deduct_result = client.try_deduct(&owner, &100i128, &1u64);
+    assert!(is_vault_err(
+        deduct_result,
+        VaultError::NotInitialized as u32
+    ));
+
+    let items = items_from(&env, &[100]);
+    let batch_result = client.try_batch_deduct(&owner, &items);
+    assert!(is_vault_err(
+        batch_result,
+        VaultError::NotInitialized as u32
+    ));
+    assert_eq!(client.balance(), 1_000);
+    assert_eq!(usdc.balance(&client.address), 1_000);
+    assert_eq!(env.events().all().len(), event_count);
 }
 
 // ---------------------------------------------------------------------------
