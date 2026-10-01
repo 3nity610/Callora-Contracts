@@ -7,8 +7,9 @@
 //! 1. **Admin identity stability** — the admin stored at `init` never changes
 //!    without a matching call that would require `admin.require_auth()`.
 //!
-//! 2. **Overflow-safe code accumulation** — `log_error` on code `u32::MAX`
-//!    must always return [`Error::Overflow`], never panic.
+//! 2. **Registered-code gate** — `log_error` succeeds only for codes that a
+//!    prior `register_error` defined. An unregistered code always returns
+//!    [`Error::UnknownErrorCode`] and never panics.
 //!
 //! 3. **Idempotent double-init** — calling `init` twice always returns
 //!    [`Error::AlreadyInitialized`], regardless of the admin supplied.
@@ -17,9 +18,9 @@
 //!    address that is not the stored admin always returns
 //!    [`Error::Unauthorized`].
 //!
-//! 5. **log_error success ↔ code < u32::MAX** — for any code strictly less
-//!    than `u32::MAX`, `log_error` succeeds (no error).  At `u32::MAX` it
-//!    fails with [`Error::Overflow`].
+//! 5. **Overflow-safe accumulation** — for a *registered* code `u32::MAX`,
+//!    `log_error` fails with [`Error::Overflow`]; every other registered code
+//!    succeeds.
 //!
 //! # Strategy
 //! - `proptest` drives random action sequences (`init → mix of operations`).
@@ -122,6 +123,10 @@ fn run_sequence(env: &Env, actions: &[ErrorsAction]) {
         "double-init must return AlreadyInitialized"
     );
 
+    // Codes successfully registered so far in this trace. `log_error` is only
+    // allowed for codes in this set (Invariant 2).
+    let mut registered: std::vec::Vec<u32> = std::vec::Vec::new();
+
     // ----- run action sequence -----
     for action in actions {
         match action {
@@ -131,6 +136,9 @@ fn run_sequence(env: &Env, actions: &[ErrorsAction]) {
                 let desc = String::from_str(env, &desc_str);
                 // Admin is authorised — must succeed.
                 client.register_error(&admin, code, &desc);
+                if !registered.contains(code) {
+                    registered.push(*code);
+                }
 
                 // Invariant 4: registering with a non-admin must fail.
                 assert_eq!(
@@ -145,16 +153,25 @@ fn run_sequence(env: &Env, actions: &[ErrorsAction]) {
 
             ErrorsAction::LogError { code } => {
                 let user = Address::generate(env);
-                if *code == u32::MAX {
-                    // Invariant 2: overflow path must return Overflow, never panic.
+                if registered.contains(code) {
+                    if *code == u32::MAX {
+                        // Invariant 5: overflow path must return Overflow, never panic.
+                        assert_eq!(
+                            client.try_log_error(&user, code).unwrap_err().unwrap(),
+                            Error::Overflow,
+                            "log_error(u32::MAX) must return Overflow"
+                        );
+                    } else {
+                        // Invariant 5: any other registered code must succeed.
+                        client.log_error(&user, code);
+                    }
+                } else {
+                    // Invariant 2: unregistered codes are rejected with a typed error.
                     assert_eq!(
                         client.try_log_error(&user, code).unwrap_err().unwrap(),
-                        Error::Overflow,
-                        "log_error(u32::MAX) must return Overflow"
+                        Error::UnknownErrorCode,
+                        "log_error on an unregistered code must return UnknownErrorCode"
                     );
-                } else {
-                    // Invariant 5: any other code must succeed.
-                    client.log_error(&user, code);
                 }
             }
 
@@ -255,8 +272,13 @@ fn overflow_guard_is_robust_at_u32_max() {
     env.mock_all_auths();
     let cid = env.register(ErrorsContract, ());
     let client = ErrorsContractClient::new(&env, &cid);
+    let admin = Address::generate(&env);
     let user = Address::generate(&env);
-    // No init needed for log_error — overflow check fires first.
+    client.init(&admin);
+    // u32::MAX must be a registered code for the arithmetic guard to be the
+    // thing that rejects it.
+    let desc = String::from_str(&env, "Max Code");
+    client.register_error(&admin, &u32::MAX, &desc);
     assert_eq!(
         client.try_log_error(&user, &u32::MAX).unwrap_err().unwrap(),
         Error::Overflow
@@ -269,11 +291,28 @@ fn overflow_guard_does_not_fire_below_max() {
     env.mock_all_auths();
     let cid = env.register(ErrorsContract, ());
     let client = ErrorsContractClient::new(&env, &cid);
+    let admin = Address::generate(&env);
     let user = Address::generate(&env);
-    // Codes that do not overflow must succeed.
+    client.init(&admin);
+    // Codes that do not overflow must succeed once registered.
     for &code in &[0_u32, 1, 100, u32::MAX - 1] {
+        let desc = String::from_str(&env, "ok");
+        client.register_error(&admin, &code, &desc);
         client.log_error(&user, &code);
     }
+}
+
+#[test]
+fn unknown_code_is_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let cid = env.register(ErrorsContract, ());
+    let client = ErrorsContractClient::new(&env, &cid);
+    let user = Address::generate(&env);
+    assert_eq!(
+        client.try_log_error(&user, &123).unwrap_err().unwrap(),
+        Error::UnknownErrorCode
+    );
 }
 
 #[test]
