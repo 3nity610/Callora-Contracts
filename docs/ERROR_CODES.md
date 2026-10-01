@@ -169,6 +169,8 @@ must not be reassigned once released.
 | 14 | `MigrationSameAddress` | Upgrade | Target migration contract address matches source |
 | 15 | `InvalidMigrationTarget` | Upgrade | Target migration contract address is invalid |
 | 16 | `NoUpgradePending` | Upgrade | No pending upgrade was found to execute or cancel |
+| 17 | `CooldownNotElapsed` | Upgrade | The cooldown period for upgrades has not yet elapsed |
+| 18 | `InvalidCooldown` | Upgrade | Requested cooldown is outside `MIN_COOLDOWN_SECONDS..=MAX_COOLDOWN_SECONDS` |
 
 ## Freeze
 

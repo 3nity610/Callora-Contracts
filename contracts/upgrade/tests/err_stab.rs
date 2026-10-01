@@ -15,7 +15,7 @@ use std::collections::BTreeSet;
 /// Every variant is paired with its **stable numeric discriminant**.  If a
 /// discriminant changes (accidentally or intentionally), this test fails
 /// with a diff-friendly message identifying the regressed variant.
-const FROZEN_ERROR_SNAPSHOT: [(u32, UpgradeError); 17] = [
+const FROZEN_ERROR_SNAPSHOT: [(u32, UpgradeError); 18] = [
     (1, UpgradeError::NotInitialized),
     (2, UpgradeError::AlreadyInitialized),
     (3, UpgradeError::Unauthorized),
@@ -33,6 +33,7 @@ const FROZEN_ERROR_SNAPSHOT: [(u32, UpgradeError); 17] = [
     (15, UpgradeError::InvalidMigrationTarget),
     (16, UpgradeError::NoUpgradePending),
     (17, UpgradeError::CooldownNotElapsed),
+    (18, UpgradeError::InvalidCooldown),
 ];
 
 /// Verify every error code in the snapshot maps to the expected discriminant.
@@ -83,4 +84,12 @@ fn test_default_cooldown_is_86400() {
         DEFAULT_COOLDOWN_SECONDS, 86_400,
         "DEFAULT_COOLDOWN_SECONDS must remain 86400 (24 h); update callers if intentionally changed"
     );
+}
+
+#[test]
+fn test_new_error_codes_are_stable() {
+    assert_eq!(UpgradeError::Unauthorized as u32, 3);
+    assert_eq!(UpgradeError::InvalidCooldown as u32, 18);
+    assert_eq!(UpgradeError::AlreadyInitialized as u32, 2);
+    assert_eq!(UpgradeError::NotInitialized as u32, 1);
 }
