@@ -19,11 +19,19 @@ export interface CliOptions {
   developerAddresses: string[];
 }
 
+/**
+ * One entry returned by a contract's TTL view.
+ *
+ * `ttl` is optional: the revenue pool's `get_ttl_policy` reports policy
+ * constants only and carries no live TTL, because contract code cannot observe
+ * the remaining TTL of a ledger entry. Revenue-pool entries get their live TTL
+ * attached from Soroban RPC `getLedgerEntries` (see `fetchLiveInstanceTtl`).
+ */
 export interface StorageEntryTtl {
   category: string;
   key_desc: string;
   storage_type: string;
-  ttl: number;
+  ttl?: number;
   threshold: number;
   bump_amount: number;
 }
@@ -111,7 +119,7 @@ export function buildSimulationTx(
   args: xdr.ScVal[],
   networkPassphrase: string
 ) {
-  const dummyAccount = new Account("GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHB", "0");
+  const dummyAccount = new Account("GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF", "0");
   const contract = new Contract(contractId);
   return new TransactionBuilder(dummyAccount, {
     fee: "100",
@@ -120,6 +128,49 @@ export function buildSimulationTx(
     .addOperation(contract.call(method, ...args))
     .setTimeout(30)
     .build();
+}
+
+/**
+ * Read the live TTL of a deployed contract's instance entry over Soroban RPC.
+ *
+ * Contract code cannot observe the remaining TTL of a ledger entry, so live
+ * TTLs must be read from the ledger itself. `getLedgerEntries` returns each
+ * entry's `liveUntilLedgerSeq`, and the response carries `latestLedger`, so the
+ * remaining TTL is `liveUntilLedgerSeq - latestLedger`.
+ *
+ * @param server  a connected Soroban RPC server
+ * @param contractId  the deployed contract whose instance entry to inspect
+ * @param errors  collects a human-readable reason when the TTL cannot be read
+ * @returns `{ ttl }` in ledgers, or `null` when the entry (or its
+ *   `liveUntilLedgerSeq`) is unavailable
+ */
+export async function fetchLiveInstanceTtl(
+  server: SorobanRpc.Server,
+  contractId: string,
+  errors: string[] = []
+): Promise<{ ttl: number } | null> {
+  try {
+    const instanceKey = new Contract(contractId).getFootprint();
+    const response = await server.getLedgerEntries(instanceKey);
+
+    if (!response.entries || response.entries.length === 0) {
+      errors.push(`No ledger entry returned for contract instance (${contractId})`);
+      return null;
+    }
+
+    const entry = response.entries[0];
+    if (typeof entry.liveUntilLedgerSeq !== "number") {
+      errors.push(
+        `Ledger entry for ${contractId} has no liveUntilLedgerSeq; cannot compute a remaining TTL`
+      );
+      return null;
+    }
+
+    return { ttl: entry.liveUntilLedgerSeq - response.latestLedger };
+  } catch (err: any) {
+    errors.push(`Failed to read live TTL for ${contractId}: ${err.message || err}`);
+    return null;
+  }
 }
 
 async function queryContractTtl(
@@ -152,16 +203,23 @@ async function queryContractTtl(
       return [];
     }
 
-    return nativeResult.map((entry: any) => ({
-      contract: contractName,
-      contract_id: contractId,
-      key_desc: String(entry.key_desc),
-      ttl: Number(entry.ttl),
-      threshold: Number(entry.threshold),
-      bump_amount: Number(entry.bump_amount),
-      // Map category name to string cleanly
-      category: String(entry.category),
-    })) as unknown as (ReportEntry & { category: string })[];
+    return nativeResult.map((entry: any) => {
+      const mapped: Record<string, unknown> = {
+        contract: contractName,
+        contract_id: contractId,
+        key_desc: String(entry.key_desc),
+        threshold: Number(entry.threshold),
+        bump_amount: Number(entry.bump_amount),
+        // Map category name to string cleanly
+        category: String(entry.category),
+      };
+      // Policy-only views (e.g. the revenue pool's `get_ttl_policy`) carry no
+      // in-band TTL; the live TTL is attached from `getLedgerEntries` instead.
+      if (entry.ttl !== undefined && entry.ttl !== null) {
+        mapped.ttl = Number(entry.ttl);
+      }
+      return mapped;
+    }) as unknown as (ReportEntry & { category: string })[];
   } catch (err: any) {
     errors.push(`Failed to query ${contractName} (${contractId}): ${err.message || err}`);
     return [];
@@ -208,17 +266,28 @@ export async function run() {
   }
 
   // Query Revenue Pool
+  //
+  // The pool exposes TTL *policy* only (`get_ttl_policy`): it reports the
+  // threshold and bump constants it applies, and deliberately has no `ttl`
+  // field, because a contract cannot observe the remaining TTL of a ledger
+  // entry. The live instance TTL therefore comes from RPC `getLedgerEntries`.
   if (options.revenuePoolId) {
-    const entries = await queryContractTtl(
+    const policy = await queryContractTtl(
       server,
       networkPassphrase,
       options.revenuePoolId,
       "RevenuePool",
-      "get_storage_ttl",
+      "get_ttl_policy",
       [],
       errors
     );
-    rawEntries.push(...(entries as any));
+
+    if (policy.length > 0) {
+      const live = await fetchLiveInstanceTtl(server, options.revenuePoolId, errors);
+      if (live !== null) {
+        rawEntries.push(...(policy as any[]).map((entry) => ({ ...entry, ttl: live.ttl })));
+      }
+    }
   }
 
   // Group and Aggregate
@@ -241,6 +310,13 @@ export async function run() {
 
   // Group raw entries
   for (const entry of rawEntries) {
+    if (typeof entry.ttl !== "number" || !Number.isFinite(entry.ttl)) {
+      errors.push(
+        `Missing live TTL for ${entry.contract} (${entry.contract_id}) category ${entry.category}`
+      );
+      continue;
+    }
+
     const cat = entry.category;
     if (!categories[cat]) {
       categories[cat] = {

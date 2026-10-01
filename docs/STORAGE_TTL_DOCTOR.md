@@ -1,19 +1,42 @@
 # Storage TTL Doctor Utility
 
-The Storage TTL Doctor is a CLI utility that monitors and reports the remaining Time-To-Live (TTL) for each storage key category in the Callora smart contracts by querying their `get_storage_ttl` view endpoints. 
+The Storage TTL Doctor is a CLI utility that reports the remaining Time-To-Live (TTL) of the Callora smart contracts' storage entries so operators can trigger extensions (bumps) before data is archived.
 
-In Soroban, storage entries (such as instance config or developer balances in persistent storage) will automatically be archived if their TTL expires. This utility ensures that operators can monitor the health of their contract storage and trigger extensions (bumps) before data is archived.
+In Soroban, storage entries (such as instance config or developer balances in persistent storage) are automatically archived once their TTL expires.
+
+---
+
+## Where live TTLs come from
+
+**Live TTLs are read from Soroban RPC `getLedgerEntries`, not from a contract view.**
+
+Each `LedgerEntry` returned by `getLedgerEntries` carries:
+
+* `liveUntilLedgerSeq` — the future ledger number at which the entry expires;
+* and the enclosing response carries `latestLedger`.
+
+Remaining TTL is therefore `liveUntilLedgerSeq - latestLedger`.
+
+This split exists because **contract code cannot observe the remaining TTL of a ledger entry**. A contract view that claims to report one can only return a constant, so an operator cannot distinguish a healthy entry from one about to be archived. The `scripts/storage-ttl-doctor.ts` revenue-pool path reads the policy from the contract and the live TTL from `getLedgerEntries`.
+
+`docs/interfaces/revenue_pool.json` and the contract source are the source of truth for the view signatures below.
 
 ---
 
 ## View Endpoints in Smart Contracts
 
-Each contract exposes a read-only endpoint `get_storage_ttl`:
-- **Vault**: `get_storage_ttl(request_ids: Vec<Symbol>) -> Vec<StorageEntryTtl>`
-- **Settlement**: `get_storage_ttl(developer_addresses: Vec<Address>) -> Vec<StorageEntryTtl>`
-- **Revenue Pool**: `get_storage_ttl() -> Vec<StorageEntryTtl>`
+### Revenue Pool — policy only
 
-The returned entries contain the category, description, storage type, current remaining TTL (in ledgers), threshold limit, and bump extension amount.
+`get_ttl_policy() -> Vec<TtlPolicy>`
+
+`TtlPolicy` carries `category`, `key_desc`, `storage_type`, `threshold`, and `bump_amount`. It has **no `ttl` field**: the revenue pool previously exposed `get_storage_ttl()`, whose `ttl` field was the live instance TTL under `cfg(test)` but the constant `BUMP_AMOUNT` in production builds — a fabricated measurement that made the tool useless (and misleading) in exactly the deployments it was meant to check. For the deployed revenue pool, the doctor reads `liveUntilLedgerSeq` for the contract instance entry over RPC.
+
+### Vault and Settlement — entries with in-band TTL
+
+* **Vault**: `get_storage_ttl(request_ids: Vec<Symbol>) -> Vec<StorageEntryTtl>`
+* **Settlement**: `get_storage_ttl(developer_addresses: Vec<Address>) -> Vec<StorageEntryTtl>`
+
+These views exist to *enumerate* which storage entries belong to a category (the doctor cannot discover persistent keys on its own). Their `ttl` fields carry the same caveat as the removed revenue-pool field and should be migrated to the same RPC-based approach; until then, treat the reported `ttl` as advisory and cross-check with `getLedgerEntries`.
 
 ---
 
@@ -98,6 +121,8 @@ The tool outputs a machine-readable JSON report to stdout:
   "errors": []
 }
 ```
+
+`remaining_ttl` for a revenue-pool category is derived from `liveUntilLedgerSeq - latestLedger` as returned by `getLedgerEntries`.
 
 ### Exit Codes
 
