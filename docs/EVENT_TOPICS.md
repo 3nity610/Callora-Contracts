@@ -77,7 +77,7 @@ Source: [`contracts/vault/src/events.rs`](../contracts/vault/src/events.rs)
 | 15 | `distribute`              | `event_distribute`             | Admin distributes funds                       |
 | 16 | `set_revenue_pool`        | `event_set_revenue_pool`       | Owner configures revenue pool address         |
 | 17 | `clear_revenue_pool`      | `event_clear_revenue_pool`     | Owner clears revenue pool address             |
-| 18 | `set_settlement`          | `event_set_settlement`         | Admin sets settlement contract address        |
+| 18 | `set_settlement`          | `event_set_settlement`         | Admin sets settlement contract address; data: `(old: Option<Address>, new: Address)` |
 | 19 | `metadata_set`            | `event_metadata_set`           | Offering metadata stored                      |
 | 20 | `price_set`               | `event_price_set`              | Offering price set                            |
 | 21 | `price_removed`           | `event_price_removed`          | Offering price removed                        |

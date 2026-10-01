@@ -498,3 +498,31 @@ fn topic_constructors_are_deterministic() {
         );
     }
 }
+
+/// Explicit catalog test for the `set_settlement` topic (issue #1111).
+///
+/// Verifies that:
+/// 1. The `event_set_settlement` constructor produces exactly the bytes for
+///    `"set_settlement"` (no accidental rename/drift).
+/// 2. The entry is present in `VAULT_TOPICS` at the expected position (row 18).
+#[test]
+fn set_settlement_topic_in_catalog() {
+    let env = Env::default();
+
+    // 1. Constructor byte-identity.
+    let sym = callora_vault::events::event_set_settlement(&env);
+    assert_eq!(
+        sym,
+        Symbol::new(&env, "set_settlement"),
+        "event_set_settlement constructor produced unexpected bytes"
+    );
+
+    // 2. Catalog presence — find the entry by name.
+    let found = VAULT_TOPICS
+        .iter()
+        .any(|(name, _)| *name == "set_settlement");
+    assert!(
+        found,
+        "\"set_settlement\" is missing from the VAULT_TOPICS catalog array"
+    );
+}

@@ -48,6 +48,8 @@ use soroban_sdk::contracterror;
 /// | 44   | CallerNotInAllowlist           | Caller not in allowlist and not owner                    |
 /// | 49   | AdminCooldownActive            | Critical admin cool-off window is still active           |
 /// | 50   | InvalidAdminCooldown           | Admin cool-off window is outside accepted bounds         |
+/// | 56   | SettlementCannotBeVault        | Settlement address cannot be the vault contract          |
+/// | 57   | SettlementCannotBeToken        | Settlement address cannot be the USDC token contract     |
 #[contracterror]
 #[repr(u32)]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
@@ -149,4 +151,8 @@ pub enum VaultError {
     InvalidTimelockWindow = 54,
     /// Amount is below the minimum transfer unit (code 55).
     BelowMinTransferAmount = 55,
+    /// Settlement address cannot be the vault contract itself (code 56).
+    SettlementCannotBeVault = 56,
+    /// Settlement address cannot be the USDC token contract (code 57).
+    SettlementCannotBeToken = 57,
 }

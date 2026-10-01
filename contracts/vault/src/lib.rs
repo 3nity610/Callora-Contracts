@@ -1242,6 +1242,12 @@ impl CalloraVault {
     ///
     /// ### Errors
     /// - [`VaultError::Unauthorized`] — caller is not the owner.
+    /// - [`VaultError::SettlementCannotBeVault`] — settlement equals the vault address.
+    /// - [`VaultError::SettlementCannotBeToken`] — settlement equals the USDC token address.
+    ///
+    /// ### Events
+    /// Emits `set_settlement` with `(event_set_settlement, version_v1, caller)` as
+    /// topics and `(old_settlement, new_settlement)` as data payload.
     pub fn set_settlement(
         env: Env,
         caller: Address,
@@ -1258,9 +1264,43 @@ impl CalloraVault {
         if caller != owner {
             return Err(VaultError::Unauthorized);
         }
+
+        // Reject settlement == vault address (would route deduct proceeds back to
+        // the vault itself, silently burning them from the settlement contract's
+        // perspective).
+        if settlement == env.current_contract_address() {
+            return Err(VaultError::SettlementCannotBeVault);
+        }
+
+        // Reject settlement == USDC token address (routing deduction proceeds to
+        // the token contract would lock them permanently).
+        let usdc_addr = env
+            .storage()
+            .instance()
+            .get::<_, Address>(&DataKey::UsdcToken)
+            .unwrap_or_else(|| panic!("USDC Token not set"));
+        if settlement == usdc_addr {
+            return Err(VaultError::SettlementCannotBeToken);
+        }
+
+        // Read old value before overwriting for audit trail.
+        let old_settlement: Option<Address> = env
+            .storage()
+            .instance()
+            .get(&DataKey::Settlement);
+
         env.storage()
             .instance()
             .set(&DataKey::Settlement, &settlement);
+
+        env.events().publish(
+            (
+                events::event_set_settlement(&env),
+                events::event_version_v1(&env),
+                caller,
+            ),
+            (old_settlement, settlement),
+        );
         Ok(())
     }
     /// Return the configured revenue pool address, if any.
