@@ -437,15 +437,13 @@ impl CalloraVault {
     ) -> Result<(), VaultError> {
         caller.require_auth();
 
-        let auth_caller = env
-            .storage()
-            .instance()
-            .get::<_, Address>(&DataKey::AuthorizedCaller)
-            .unwrap_or_else(|| panic!("Authorized caller not set"));
+        // Owner-or-caller authorization, via the helper that already encodes the
+        // documented rule. `DataKey::AuthorizedCaller` stores an `Option<Address>`
+        // (see `init` and `set_authorized_caller`), where `None` means "only the
+        // owner may deduct". Reading it as a bare `Address` used to panic with
+        // "Authorized caller not set" and made that fallback unreachable.
+        Self::require_authorized_deduct_caller(env.clone(), &caller)?;
 
-        if caller != auth_caller {
-            return Err(VaultError::Unauthorized);
-        }
         if env
             .storage()
             .instance()
@@ -549,7 +547,8 @@ impl CalloraVault {
     /// `Ok(())` on success.
     ///
     /// ### Errors
-    /// - [`VaultError::Unauthorized`] — caller is not the authorized deduct caller.
+    /// - [`VaultError::Unauthorized`] — caller is neither the authorized deduct
+    ///   caller nor the vault owner.
     /// - [`VaultError::Paused`] — vault is paused.
     /// - [`VaultError::BatchEmpty`] — `items` is empty.
     /// - [`VaultError::BatchTooLarge`] — `items.len() > MAX_BATCH_SIZE`.
@@ -572,15 +571,10 @@ impl CalloraVault {
         caller.require_auth();
 
         // Authorization and lifecycle preconditions — checked before mutation.
-        let auth_caller = env
-            .storage()
-            .instance()
-            .get::<_, Address>(&DataKey::AuthorizedCaller)
-            .unwrap_or_else(|| panic!("Authorized caller not set"));
+        // Same owner-or-caller rule as `deduct`; without this a cleared
+        // authorized caller panicked instead of falling back to the owner.
+        Self::require_authorized_deduct_caller(env.clone(), &caller)?;
 
-        if caller != auth_caller {
-            return Err(VaultError::Unauthorized);
-        }
         if env
             .storage()
             .instance()
@@ -829,11 +823,14 @@ impl CalloraVault {
             }
         }
 
-        let old_caller: Option<Address> = env.storage().instance().get(&DataKey::AuthorizedCaller);
+        let old_caller = Self::get_authorized_caller(&env);
 
-        env.storage()
-            .instance()
-            .set(&DataKey::AuthorizedCaller, &new_caller);
+        // Setting stores a plain `Address`; clearing removes the key entirely so
+        // the value never round-trips through `ScVal::Void`.
+        match new_caller {
+            Some(ref caller) => env.storage().instance().set(&DataKey::AuthorizedCaller, caller),
+            None => env.storage().instance().remove(&DataKey::AuthorizedCaller),
+        }
 
         // Advance nonce.
         let next_nonce = stored_nonce.checked_add(1).ok_or(VaultError::Overflow)?;
@@ -2177,13 +2174,31 @@ impl CalloraVault {
     }
 
     #[inline(never)]
+    /// Read the authorized deduct caller, if one is set.
+    ///
+    /// The value is stored as a plain `Address`; the key is absent when no
+    /// caller is configured. `None` must never be written as a value, because
+    /// `ScVal::Void` does not read back as `Option<Address>` and would abort the
+    /// host call (issue #1107).
+    pub(crate) fn get_authorized_caller(env: &Env) -> Option<Address> {
+        if env.storage().instance().has(&DataKey::AuthorizedCaller) {
+            env.storage()
+                .instance()
+                .get::<_, Address>(&DataKey::AuthorizedCaller)
+        } else {
+            None
+        }
+    }
+
+    /// Owner-or-caller check shared by [`CalloraVault::deduct`] and
+    /// [`CalloraVault::batch_deduct`]. The owner may always deduct; when an
+    /// authorized caller is configured it may deduct too.
     fn require_authorized_deduct_caller(env: Env, caller: &Address) -> Result<(), VaultError> {
         let owner = Self::get_owner(env.clone());
         if *caller == owner {
             return Ok(());
         }
-        let auth_caller: Option<Address> = env.storage().instance().get(&DataKey::AuthorizedCaller);
-        if let Some(ac) = auth_caller {
+        if let Some(ac) = Self::get_authorized_caller(&env) {
             if *caller == ac {
                 return Ok(());
             }
@@ -2626,6 +2641,13 @@ mod test_admin_transfers;
 /// same storage, so a pre-check through the view predicts deposit acceptance.
 #[cfg(test)]
 mod test_allowlist;
+
+/// Issue #1107 — owner-deduction fallback. The owner may `deduct` /
+/// `batch_deduct` when `DataKey::AuthorizedCaller` is `None` (or holds someone
+/// else), and an unauthorized caller gets a typed error rather than a host
+/// panic.
+#[cfg(test)]
+mod test_owner_deduct_fallback;
 
 // #[cfg(test)]
 // mod test_gas_budget;
