@@ -1689,6 +1689,8 @@ mod test_reentrancy;
 // Legacy suites targeting the pre-nonce payment API are intentionally not
 // compiled; current authorization behavior is covered by contracts/tests.
 #[cfg(test)]
+mod test_admin_migration;
+#[cfg(test)]
 mod test_error_codes;
 #[cfg(test)]
 mod test_events;
