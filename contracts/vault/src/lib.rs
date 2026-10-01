@@ -2790,6 +2790,15 @@ mod test_allowlist_remove;
 #[cfg(test)]
 mod test_simulate_parity;
 
+#[cfg(test)]
+mod test_views;
+
+#[cfg(test)]
+mod test_reentrancy;
+
+#[cfg(test)]
+mod test;
+
 // #[cfg(test)]
 // mod test_gas_budget;
 // #[cfg(test)]

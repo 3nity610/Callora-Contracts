@@ -722,3 +722,16 @@ mod tests {
         assert_eq!(sym, Symbol::new(&env, "tl_window_changed"));
     }
 }
+
+#[cfg(test)]
+mod version_symbol_tests {
+    use super::*;
+
+    /// Regression: `"callora.v1"` contains `.`, which Soroban rejects in a
+    /// Symbol, so `init` panicked on every call.
+    #[test]
+    fn test_event_version_v1_is_a_valid_symbol() {
+        let env = soroban_sdk::Env::default();
+        assert_eq!(event_version_v1(&env), Symbol::new(&env, "callora_v1"));
+    }
+}
