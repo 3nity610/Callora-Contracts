@@ -60,6 +60,11 @@ pub mod admin;
 pub mod timelock;
 pub mod views;
 
+pub use timelock::{
+    DEFAULT_TIMELOCK_SECONDS, MAX_TIMELOCK_SECONDS, MIN_TIMELOCK_SECONDS,
+    PROPOSAL_GRACE_SECONDS, TIMELOCK_GRACE_SECONDS,
+};
+
 /// Bounded visible-ASCII metadata validators (shared `callora-validators` crate).
 pub use callora_validators as validators;
 
@@ -1467,6 +1472,14 @@ impl CalloraVault {
         result
     }
 
+    /// Return the recorded WASM hash after a successful upgrade, if any.
+    pub fn get_version(env: Env) -> Option<BytesN<32>> {
+        Self::bump_instance_ttl(&env);
+        env.storage()
+            .instance()
+            .get::<_, BytesN<32>>(&StorageKey::ContractVersion)
+    }
+
     /// Require the caller to be the current admin.
     fn require_admin(env: &Env, caller: &Address) -> Result<(), VaultError> {
         caller.require_auth();
@@ -1729,11 +1742,14 @@ impl CalloraVault {
         let window = timelock::get_timelock_window(&env);
         let execute_after = timelock::saturating_deadline(proposed_at, window)
             .ok_or(VaultError::TimelockOverflow)?;
+        let expires_at = timelock::saturating_deadline(execute_after, timelock::PROPOSAL_GRACE_SECONDS)
+            .ok_or(VaultError::TimelockOverflow)?;
         timelock::set_pending_pause(
             &env,
             &timelock::PendingPause {
                 proposed_at,
                 execute_after,
+                expires_at,
             },
         );
         env.events().publish(
@@ -1777,6 +1793,11 @@ impl CalloraVault {
         let proposal = timelock::get_pending_pause(&env).ok_or(VaultError::ProposalNotFound)?;
         if env.ledger().timestamp() < proposal.execute_after {
             return Err(VaultError::TimelockNotExpired);
+        }
+        if env.ledger().timestamp() > proposal.expires_at {
+            timelock::clear_pending_pause(&env);
+            Self::bump_instance_ttl(&env);
+            return Err(VaultError::ProposalExpired);
         }
 
         // Idempotent: if the vault is already paused (e.g. from a prior
@@ -1885,12 +1906,15 @@ impl CalloraVault {
         let window = timelock::get_timelock_window(&env);
         let execute_after = timelock::saturating_deadline(proposed_at, window)
             .ok_or(VaultError::TimelockOverflow)?;
+        let expires_at = timelock::saturating_deadline(execute_after, timelock::PROPOSAL_GRACE_SECONDS)
+            .ok_or(VaultError::TimelockOverflow)?;
         timelock::set_pending_upgrade(
             &env,
             &timelock::PendingUpgrade {
                 wasm_hash: new_wasm_hash.clone(),
                 proposed_at,
                 execute_after,
+                expires_at,
             },
         );
         env.events().publish(
@@ -1933,6 +1957,11 @@ impl CalloraVault {
         let proposal = timelock::get_pending_upgrade(&env).ok_or(VaultError::ProposalNotFound)?;
         if env.ledger().timestamp() < proposal.execute_after {
             return Err(VaultError::TimelockNotExpired);
+        }
+        if env.ledger().timestamp() > proposal.expires_at {
+            timelock::clear_pending_upgrade(&env);
+            Self::bump_instance_ttl(&env);
+            return Err(VaultError::ProposalExpired);
         }
         admin::guard(&env, Symbol::new(&env, "upgrade"))?;
         let wasm_hash = proposal.wasm_hash.clone();
@@ -2015,6 +2044,8 @@ impl CalloraVault {
         let window = timelock::get_timelock_window(&env);
         let execute_after = timelock::saturating_deadline(proposed_at, window)
             .ok_or(VaultError::TimelockOverflow)?;
+        let expires_at = timelock::saturating_deadline(execute_after, timelock::PROPOSAL_GRACE_SECONDS)
+            .ok_or(VaultError::TimelockOverflow)?;
         timelock::set_pending_sweep(
             &env,
             &timelock::PendingSweep {
@@ -2022,6 +2053,7 @@ impl CalloraVault {
                 amount,
                 proposed_at,
                 execute_after,
+                expires_at,
             },
         );
         env.events().publish(
@@ -2065,6 +2097,11 @@ impl CalloraVault {
         let proposal = timelock::get_pending_sweep(&env).ok_or(VaultError::ProposalNotFound)?;
         if env.ledger().timestamp() < proposal.execute_after {
             return Err(VaultError::TimelockNotExpired);
+        }
+        if env.ledger().timestamp() > proposal.expires_at {
+            timelock::clear_pending_sweep(&env);
+            Self::bump_instance_ttl(&env);
+            return Err(VaultError::ProposalExpired);
         }
         let usdc_addr: Address = env
             .storage()
@@ -2648,6 +2685,9 @@ mod test_allowlist;
 /// panic.
 #[cfg(test)]
 mod test_owner_deduct_fallback;
+
+#[cfg(test)]
+mod test_timelock;
 
 // #[cfg(test)]
 // mod test_gas_budget;

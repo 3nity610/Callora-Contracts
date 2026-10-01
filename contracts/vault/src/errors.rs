@@ -50,6 +50,12 @@ use soroban_sdk::contracterror;
 /// | 50   | InvalidAdminCooldown           | Admin cool-off window is outside accepted bounds         |
 /// | 56   | SettlementCannotBeVault        | Settlement address cannot be the vault contract          |
 /// | 57   | SettlementCannotBeToken        | Settlement address cannot be the USDC token contract     |
+/// | 58   | ProposalExpired                | Proposal has passed its grace period and is expired      |
+/// | 51   | ProposalNotFound               | No pending timelock proposal for the requested action    |
+/// | 52   | TimelockNotExpired             | Action attempted before the timelock window has elapsed  |
+/// | 53   | TimelockOverflow               | `proposed_at + window` overflowed `u64`                  |
+/// | 54   | InvalidTimelockWindow          | Proposed timelock window is outside allowed bounds       |
+/// | 55   | BelowMinTransferAmount         | Amount is below the minimum transfer unit                |
 #[contracterror]
 #[repr(u32)]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
@@ -155,4 +161,6 @@ pub enum VaultError {
     SettlementCannotBeVault = 56,
     /// Settlement address cannot be the USDC token contract (code 57).
     SettlementCannotBeToken = 57,
+    /// Proposal has passed its grace period and is no longer executable (code 58).
+    ProposalExpired = 58,
 }
