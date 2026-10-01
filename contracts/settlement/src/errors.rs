@@ -51,6 +51,9 @@ use soroban_sdk::contracterror;
 /// | 41   | NoVaultRotationPending       | No vault rotation is pending                         |
 /// | 42   | BroadcastMessageTooLong      | Admin broadcast message exceeds the maximum length   |
 /// | 43   | CrossTenantBatch             | Batch settlement mixes developers from different tenants |
+/// | 44   | NoUpgradePending             | No upgrade proposal is currently pending             |
+/// | 45   | ZeroWasmHash                 | Proposed WASM hash is all-zero (rejected)            |
+/// | 46   | UpgradeTimelockNotExpired    | Upgrade timelock delay has not yet elapsed           |
 #[contracterror]
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[repr(u32)]
@@ -104,4 +107,10 @@ pub enum SettlementError {
     BroadcastMessageTooLong = 42,
     /// Batch settlement mixes developers from different tenants.
     CrossTenantBatch = 43,
+    /// No upgrade proposal is currently pending.
+    NoUpgradePending = 44,
+    /// Proposed WASM hash is all-zero bytes (rejected as invalid).
+    ZeroWasmHash = 45,
+    /// Upgrade timelock delay has not yet elapsed.
+    UpgradeTimelockNotExpired = 46,
 }

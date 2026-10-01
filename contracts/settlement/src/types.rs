@@ -58,6 +58,8 @@ pub enum StorageKey {
     PriceRegistryLastWrite(Address),
     /// Price entry for a given offering identifier.
     Price(soroban_sdk::String),
+    /// Pending timelocked WASM upgrade proposal.
+    PendingUpgrade,
 }
 
 /// Read-only preview of a developer claim/withdrawal.
@@ -260,4 +262,21 @@ pub struct AdminMigrationEvent {
     pub to: Address,
     pub amount: i128,
     pub executed_at: u64,
+}
+
+/// Emitted when the admin proposes a timelocked WASM upgrade.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct UpgradeProposedEvent {
+    pub wasm_hash: soroban_sdk::BytesN<32>,
+    pub proposed_at: u64,
+    pub execute_after: u64,
+}
+
+/// Emitted when a pending WASM upgrade is cancelled by the admin.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct UpgradeCancelledEvent {
+    pub wasm_hash: soroban_sdk::BytesN<32>,
+    pub cancelled_at: u64,
 }
