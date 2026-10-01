@@ -48,18 +48,19 @@ fn settlement_error_codes_are_stable_and_unique() {
         (40, SettlementError::InvalidVault),
         (41, SettlementError::NoVaultRotationPending),
         (42, SettlementError::BroadcastMessageTooLong),
+        (43, SettlementError::CrossTenantBatch),
     ];
 
     let mut seen = BTreeSet::new();
     for (expected_code, variant) in mappings {
-        assert_eq!(variant as u32, expected_code);
+        assert_eq(variant as u32, expected_code);
         assert!(
             seen.insert(expected_code),
             "duplicate settlement error code {expected_code}"
         );
     }
 
-    assert_eq!(seen.len(), 42);
+    assert_eq(seen.len(), 43);
 }
 
 #[test]
@@ -108,6 +109,7 @@ fn error_code_docs_list_every_settlement_code() {
         "| 40 | `InvalidVault` | Settlement | Vault address is invalid |",
         "| 41 | `NoVaultRotationPending` | Settlement | No vault rotation is pending |",
         "| 42 | `BroadcastMessageTooLong` | Settlement | Admin broadcast message exceeds the maximum length |",
+        "| 43 | `CrossTenantBatch` | Settlement | Batch settlement mixed multiple developers |",
     ];
 
     for line in expected_lines {
