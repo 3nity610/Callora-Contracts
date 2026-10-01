@@ -43,6 +43,8 @@ Release artifacts land in `target/wasm32-unknown-unknown/release/<crate>.wasm`. 
 
 ## What’s included
 
+See [`docs/DISTRIBUTE_VS_REVENUE_POOL.md`](docs/DISTRIBUTE_VS_REVENUE_POOL.md) for the canonical payout contract, behavioural differences, and which contract `callora-freeze` protects.
+
 ### 1. `callora-vault`
 
 The primary storage and metering contract. Holds USDC on behalf of API consumers and deducts balances on every metered call.
@@ -170,8 +172,12 @@ callora-contracts/
 │   ├── coverage.sh         # Local coverage runner
 │   └── check-wasm-size.sh  # WASM size verification
 ├── docs/
-│   ├── interfaces/                        # JSON contract interface summaries│   ├── ACCESS_CONTROL.md                  # Role-based access control overview│   └── CONTRACT_ADDRESS_CONFIGURATION.md  # Operator guide: configure contract addresses├── BEN
-CHMARKS.md           # Gas/cost notes├── EVENT_SCHEMA.md         # Event topics and payloads
+│   ├── interfaces/                        # JSON contract interface summaries
+│   ├── ACCESS_CONTROL.md                  # Role-based access control overview
+│   ├── DISTRIBUTE_VS_REVENUE_POOL.md      # Canonical payout contract and behavioural differences
+│   └── CONTRACT_ADDRESS_CONFIGURATION.md  # Operator guide: configure contract addresses
+├── BENCHMARKS.md           # Gas/cost notes
+├── EVENT_SCHEMA.md         # Event topics and payloads
 ├── UPGRADE.md              # Upgrade and migration path
 ├── SECURITY.md             # Security checklist
 └── tarpaulin.toml          # cargo-tarpaulin configuration
