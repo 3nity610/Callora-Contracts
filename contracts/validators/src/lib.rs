@@ -16,7 +16,6 @@
 #![no_std]
 
 mod errors;
-mod migrate;
 mod validators;
 mod views;
 
