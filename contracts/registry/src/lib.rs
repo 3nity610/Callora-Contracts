@@ -115,10 +115,15 @@ impl CalloraRegistry {
     }
 
     fn validate_offering_id(offering_id: &String) -> Result<(), RegistryError> {
-        if offering_id.is_empty() || offering_id.len() > MAX_OFFERING_ID_LEN {
-            return Err(RegistryError::InvalidOfferingId);
-        }
-        Ok(())
+        // Offering ids are storage keys and off-chain routing labels, so they must
+        // be unambiguous. We delegate to the shared validator, which enforces
+        // the 64-byte cap, rejects C0/DEL controls, zero-width/bidi controls,
+        // Unicode confusables, leading/trailing spaces, and restricts the
+        // alphabet to `[a-z0-9_-]`. Any rejection maps to `InvalidOfferingId`
+        // so callers never see a confusing `InvalidMetadata` for an id failure.
+        callora_validators::normalize_offering_id(offering_id)
+            .map(|_| ())
+            .map_err(|_| RegistryError::InvalidOfferingId)
     }
 
     fn validate_metadata(metadata: &String) -> Result<(), RegistryError> {

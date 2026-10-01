@@ -1,4 +1,4 @@
-//! Metadata byte-length and encoding validation for `callora-registry`.
+//! Metadata and offering-id byte-length and encoding validation for `callora-registry`.
 //!
 //! Issue #1065: value-bearing entry points must bound metadata byte length and
 //! reject invalid encodings *before* any cross-contract call or state change.
@@ -14,6 +14,11 @@
 //! - Accept bounded visible-ASCII metadata (including exactly 256 bytes).
 //! - A rejected call leaves no partial state (not registered, count unchanged,
 //!   catalog `put_offering` never called).
+//!
+//! Offering ids are additionally validated through
+//! `callora_validators::normalize_visible_ascii` so that control bytes,
+//! leading/trailing whitespace, and non-visible-ASCII ids are rejected with
+//! `InvalidOfferingId` (not `InvalidMetadata`).
 //!
 //! Before the fix only emptiness and length (256) were checked, so the
 //! control-character / whitespace / non-ASCII cases below were *accepted*.
@@ -449,5 +454,155 @@ fn rejected_metadata_leaves_no_partial_state_gated() {
     );
     assert!(matches!(result, Err(Ok(RegistryError::InvalidMetadata))));
     assert!(!client.is_offering_registered(&oid_bad));
+    assert_eq!(client.registered_count(), 1);
+}
+
+// ---------------------------------------------------------------------------
+// Reject invalid offering ids (control bytes, whitespace, non-visible ASCII)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn rejects_control_character_in_offering_id() {
+    let env = Env::default();
+    let (admin, client, developer) = setup_registry(&env);
+    let oid = metadata(&env, "bad\u{0000}id");
+    let meta = metadata(&env, "ipfs://cid");
+
+    let result = client.try_register_offering(&admin, &developer, &oid, &meta);
+    assert!(
+        matches!(result, Err(Ok(RegistryError::InvalidOfferingId))),
+        "control char offering id must be rejected with InvalidOfferingId, got {:?}",
+        result
+    );
+    assert!(!client.is_offering_registered(&oid));
+    assert_eq!(client.registered_count(), 0);
+}
+
+#[test]
+fn rejects_line_break_in_offering_id() {
+    let env = Env::default();
+    let (admin, client, developer) = setup_registry(&env);
+    let oid = metadata(&env, "line1\nline2");
+    let meta = metadata(&env, "ipfs://cid");
+
+    let result = client.try_register_offering(&admin, &developer, &oid, &meta);
+    assert!(matches!(result, Err(Ok(RegistryError::InvalidOfferingId))));
+    assert!(!client.is_offering_registered(&oid));
+}
+
+#[test]
+fn rejects_non_ascii_multibyte_offering_id() {
+    let env = Env::default();
+    let (admin, client, developer) = setup_registry(&env);
+    let oid = metadata(&env, "caf\u{e9}");
+    let meta = metadata(&env, "ipfs://cid");
+
+    let result = client.try_register_offering(&admin, &developer, &oid, &meta);
+    assert!(matches!(result, Err(Ok(RegistryError::InvalidOfferingId))));
+    assert!(!client.is_offering_registered(&oid));
+}
+
+#[test]
+fn rejects_leading_whitespace_in_offering_id() {
+    let env = Env::default();
+    let (admin, client, developer) = setup_registry(&env);
+    let oid = metadata(&env, " offering-1");
+    let meta = metadata(&env, "ipfs://cid");
+
+    let result = client.try_register_offering(&admin, &developer, &oid, &meta);
+    assert!(matches!(result, Err(Ok(RegistryError::InvalidOfferingId))));
+    assert!(!client.is_offering_registered(&oid));
+}
+
+#[test]
+fn rejects_trailing_whitespace_in_offering_id() {
+    let env = Env::default();
+    let (admin, client, developer) = setup_registry(&env);
+    let oid = metadata(&env, "offering-1 ");
+    let meta = metadata(&env, "ipfs://cid");
+
+    let result = client.try_register_offering(&admin, &developer, &oid, &meta);
+    assert!(matches!(result, Err(Ok(RegistryError::InvalidOfferingId))));
+    assert!(!client.is_offering_registered(&oid));
+}
+
+#[test]
+fn rejects_whitespace_only_offering_id() {
+    let env = Env::default();
+    let (admin, client, developer) = setup_registry(&env);
+    let oid = metadata(&env, "   ");
+    let meta = metadata(&env, "ipfs://cid");
+
+    let result = client.try_register_offering(&admin, &developer, &oid, &meta);
+    assert!(matches!(result, Err(Ok(RegistryError::InvalidOfferingId))));
+    assert!(!client.is_offering_registered(&oid));
+}
+
+#[test]
+fn rejects_empty_offering_id() {
+    let env = Env::default();
+    let (admin, client, developer) = setup_registry(&env);
+    let oid = metadata(&env, "");
+    let meta = metadata(&env, "ipfs://cid");
+
+    let result = client.try_register_offering(&admin, &developer, &oid, &meta);
+    assert!(matches!(result, Err(Ok(RegistryError::InvalidOfferingId))));
+    assert!(!client.is_offering_registered(&oid));
+}
+
+#[test]
+fn rejects_over_length_offering_id() {
+    let env = Env::default();
+    let (admin, client, developer) = setup_registry(&env);
+    let long: std::string::String = "a".repeat(65);
+    let oid = metadata(&env, &long);
+    let meta = metadata(&env, "ipfs://cid");
+
+    let result = client.try_register_offering(&admin, &developer, &oid, &meta);
+    assert!(matches!(result, Err(Ok(RegistryError::InvalidOfferingId))));
+    assert!(!client.is_offering_registered(&oid));
+}
+
+#[test]
+fn rejects_invalid_offering_id_in_with_gate_variant() {
+    let env = Env::default();
+    let (admin, client, developer) = setup_registry(&env);
+    let oid = metadata(&env, "bad\u{0001}id");
+    let token = Address::generate(&env);
+    let meta = metadata(&env, "ipfs://cid");
+
+    let result =
+        client.try_register_offering_with_gate(&admin, &developer, &token, &100i128, &oid, &meta);
+    assert!(matches!(result, Err(Ok(RegistryError::InvalidOfferingId))));
+    assert!(!client.is_offering_registered(&oid));
+    assert_eq!(client.registered_count(), 0);
+}
+
+// ---------------------------------------------------------------------------
+// Accept valid offering ids
+// ---------------------------------------------------------------------------
+
+#[test]
+fn accepts_valid_offering_id() {
+    let env = Env::default();
+    let (admin, client, developer) = setup_registry(&env);
+    let oid = offering_id(&env, "ok");
+    let meta = metadata(&env, "ipfs://cid");
+
+    client.register_offering(&admin, &developer, &oid, &meta);
+    assert!(client.is_offering_registered(&oid));
+    assert_eq!(client.registered_count(), 1);
+}
+
+#[test]
+fn accepts_exactly_max_length_offering_id() {
+    let env = Env::default();
+    let (admin, client, developer) = setup_registry(&env);
+    let exact: std::string::String = "a".repeat(64);
+    let oid = metadata(&env, &exact);
+    let meta = metadata(&env, "ipfs://cid");
+
+    client.register_offering(&admin, &developer, &oid, &meta);
+    assert!(client.is_offering_registered(&oid));
     assert_eq!(client.registered_count(), 1);
 }
