@@ -88,8 +88,6 @@ pub enum DataKey {
     Paused,
     /// Pending owner address during a two-step ownership transfer.
     PendingOwner,
-    Depositor(Address),
-    AllowedDepositorsList,
 }
 
 /// Instance / persistent storage keys for the vault.
@@ -371,21 +369,8 @@ impl CalloraVault {
             .get::<_, i128>(&DataKey::MinDeposit)
             .unwrap();
         Self::require_valid_deposit_amount(amount, min_dep)?;
-        let owner = env
-            .storage()
-            .instance()
-            .get::<_, Address>(&DataKey::Owner)
-            .unwrap();
-        if caller != owner {
-            let allowlist = env
-                .storage()
-                .instance()
-                .get::<_, Vec<Address>>(&StorageKey::AllowedDepositors)
-                .unwrap_or_else(|| Vec::new(&env));
-
-            if !allowlist.contains(&caller) {
-                return Err(VaultError::CallerNotInAllowlist);
-            }
+        if !Self::allowlist_allows(&env, &caller) {
+            return Err(VaultError::CallerNotInAllowlist);
         }
         let current_bal = env
             .storage()
@@ -797,12 +782,6 @@ impl CalloraVault {
     //     }
     //     let _ = Self::require_settlement(&env)?;
     //     Ok(running)
-    // }
-
-    // pub fn get_meta(env: Env) -> Result<VaultMeta, VaultError> {
-    //     env.storage()
-    //         .instance()
-    //         .set(&DataKey::Depositor(depositor), &true);
     // }
 
     /// Update the address permitted to call [`deduct`] and [`batch_deduct`] (owner only).
@@ -2314,11 +2293,41 @@ impl CalloraVault {
         Ok(())
     }
 
-    /// Check whether an address is on the deposit allowlist.
+    /// Single source of truth for the deposit authorization gate.
     ///
-    /// Returns `true` if the address has been added via [`add_address`],
-    /// `false` otherwise.  Note that the owner may always deposit regardless
-    /// of the allowlist — this view only reflects the explicit allowlist.
+    /// Returns `true` iff `caller` is the vault owner or is present in the
+    /// `StorageKey::AllowedDepositors` vector — precisely the predicate
+    /// [`CalloraVault::deposit`] enforces and
+    /// [`CalloraVault::is_authorized_depositor`] reports.  Both call sites
+    /// share this helper so the view and the mutating path can never drift
+    /// apart (issue #1110).
+    ///
+    /// A vault that has not been initialized has neither an owner nor an
+    /// allowlist, so this returns `false`.
+    fn allowlist_allows(env: &Env, caller: &Address) -> bool {
+        let owner: Option<Address> = env.storage().instance().get(&DataKey::Owner);
+        if owner.as_ref() == Some(caller) {
+            return true;
+        }
+        env.storage()
+            .instance()
+            .get::<_, Vec<Address>>(&StorageKey::AllowedDepositors)
+            .map(|allowlist| allowlist.contains(caller))
+            .unwrap_or(false)
+    }
+
+    /// Check whether an address is authorized to deposit.
+    ///
+    /// Returns `true` if the address is the vault owner **or** has been added
+    /// to the deposit allowlist via [`add_address`]; `false` otherwise.  This
+    /// is exactly the authorization gate [`deposit`] applies, so a successful
+    /// pre-check through this view predicts deposit acceptance along the
+    /// caller dimension — the vault can still reject a deposit for unrelated
+    /// reasons such as pause state or an amount below `min_deposit`.
+    ///
+    /// The owner counts as authorized even when the allowlist is empty or has
+    /// been cleared with [`clear_all`] (mirroring `deposit`'s owner bypass).
+    /// Returns `false` before `init`.
     ///
     /// No auth required; this is a read-only view.
     ///
@@ -2326,13 +2335,10 @@ impl CalloraVault {
     /// - `caller` — address to check.
     ///
     /// ### Returns
-    /// `true` if the address is on the deposit allowlist.
+    /// `true` if `caller` is the owner or is on the deposit allowlist.
     pub fn is_authorized_depositor(env: Env, caller: Address) -> bool {
         Self::bump_instance_ttl(&env);
-        env.storage()
-            .instance()
-            .get::<_, bool>(&DataKey::Depositor(caller))
-            .unwrap_or(false)
+        Self::allowlist_allows(&env, &caller)
     }
 
     /// Add a single address to the deposit allowlist (owner-only).
@@ -2614,6 +2620,12 @@ mod test_event_schema;
 
 #[cfg(test)]
 mod test_admin_transfers;
+
+/// Allowlist ↔ deposit authorization parity (issue #1110): the
+/// `is_authorized_depositor` view and the `deposit` gate must consult the
+/// same storage, so a pre-check through the view predicts deposit acceptance.
+#[cfg(test)]
+mod test_allowlist;
 
 // #[cfg(test)]
 // mod test_gas_budget;

@@ -158,8 +158,7 @@ pub enum StorageKey {
     Metadata(String),              // String (offering metadata by offering_id)
     PendingOwner,                  // Address
     PendingAdmin,                  // Address
-    Depositor(Address),            // bool — persistent storage, allowlist membership
-    DepositorIndex,                // Vec<Address> — persistent storage, paginated enumeration index
+    AllowedDepositors,             // Vec<Address> — instance storage, deposit allowlist
     ContractVersion,               // BytesN<32>
     ProcessedRequest(Symbol),      // bool — persistent storage, idempotency marker
 }
@@ -181,8 +180,8 @@ pub enum StorageKey {
 | `OfferingIndex`            | Instance      | `Vec<String>`     | Ordered list of offering IDs with stored prices        | `set_price()`, `remove_price()`, `list_prices()`                           |
 | `PendingOwner`             | Instance      | `Address`         | Two-step ownership transfer nominee                    | `transfer_ownership()`, `accept_ownership()`                               |
 | `PendingAdmin`             | Instance      | `Address`         | Two-step admin transfer nominee                        | `set_admin()`, `accept_admin()`                                            |
-| `Depositor(Address)`       | **Persistent** | `bool`           | Allowlist membership for a depositor (O(1) lookup)     | `set_allowed_depositor()`, `remove_allowed_depositor()`, `is_authorized_depositor()` |
-| `DepositorIndex`           | **Persistent** | `Vec<Address>`   | Paginated enumeration index of allowed depositors      | `set_allowed_depositor()`, `remove_allowed_depositor()`, `get_allowed_depositors()` |
+| `Depositor(Address)` / `DepositorIndex` | — | — | **Removed (#1110)** — never written; the canonical allowlist entry is `AllowedDepositors` below | — |
+| `AllowedDepositors`          | Instance      | `Vec<Address>`    | Addresses permitted to deposit (owner bypasses)       | `add_address()`, `clear_all()`, `deposit()`, `is_authorized_depositor()` |
 | `ContractVersion`          | Instance      | `BytesN<32>`      | WASM hash set by `upgrade()`                           | `upgrade()`, `version()`                                                   |
 | `ProcessedRequest(Symbol)` | **Temporary** | `bool`            | Idempotency marker for a processed deduct `request_id` | Written by `deduct()` / `batch_deduct()`; read by `is_request_processed()` |
 | Key Variant | Storage Tier | Value Type | Description | Access |
@@ -197,7 +196,7 @@ pub enum StorageKey {
 | `Metadata(String)` | Instance | `String` | Per-offering metadata (IPFS CID / URI) | `set_metadata()`, `get_metadata()`, `update_metadata()` |
 | `PendingOwner` | Instance | `Address` | Two-step ownership transfer nominee | `transfer_ownership()`, `accept_ownership()` |
 | `PendingAdmin` | Instance | `Address` | Two-step admin transfer nominee | `set_admin()`, `accept_admin()` |
-| `DepositorList` | Instance | `Vec<Address>` | Allowed depositor addresses | `set_allowed_depositor()`, `get_allowed_depositors()` |
+| `DepositorList` (renamed `AllowedDepositors`) | Instance | `Vec<Address>` | Allowed depositor addresses | `add_address()`, `clear_all()`, `get_allowlist()` |
 | `ContractVersion` | Instance | `BytesN<32>` | WASM hash set by `upgrade()` | `upgrade()`, `version()` |
 | `ProcessedRequest(Symbol)` | **Persistent** | `bool`            | Idempotency marker for a processed deduct `request_id` | Written by `deduct()` / `batch_deduct()`; read by `is_request_processed()` |
 | `LifetimeDeposit(Address)` | **Persistent** | `i128`            | Cumulative USDC ever deposited by a given address; never decrements | Written by `deposit()`; read by `get_lifetime_deposit()` / `list_lifetime_deposits()` |
@@ -276,9 +275,9 @@ Sets up the vault with initial state:
 
 | Operation                          | Reads                   | Writes                               | Authorization |
 | ---------------------------------- | ----------------------- | ------------------------------------ | ------------- |
-| `set_allowed_depositor(depositor)` | AllowedDepositors       | AllowedDepositors (append or remove) | Owner only    |
-| `set_authorized_caller(caller)`    | Meta                    | Meta (authorized_caller field)       | Owner only    |
-| `is_authorized_depositor(caller)`  | Meta, AllowedDepositors | —                                    | Public read   |
+| `add_address(depositor)` / `clear_all()` | AllowedDepositors       | AllowedDepositors (append or remove) | Owner only    |
+| `set_authorized_caller(caller)` | Meta                    | Meta (authorized_caller field)       | Owner only    |
+| `is_authorized_depositor(caller)`  | Owner, AllowedDepositors | —                                    | Public read   |
 
 ### Settlement & Routing
 
@@ -396,7 +395,7 @@ env.storage().instance().set(&StorageKey::Meta, &new_meta);
 
 ### Access Control
 
-- **Owner-Only Operations:** `set_allowed_depositor()`, `set_authorized_caller()`, `transfer_ownership()`, `withdraw()`, `withdraw_to()`, metadata operations
+- **Owner-Only Operations:** `add_address()`, `clear_all()`, `set_authorized_caller()`, `transfer_ownership()`, `withdraw()`, `withdraw_to()`, metadata operations
 - **Admin-Only Operations:** `distribute()`, `set_admin()`, `set_settlement()`, `set_revenue_pool()`
 - **Public Operations:** `balance()`, `get_meta()`, `get_metadata()`, `is_authorized_depositor()`, `get_settlement()`, `get_revenue_pool()` (all read-only)
 - **Depositor Operations:** `deposit()` (owner or allowed depositor); `deduct()` and `batch_deduct()` (owner or authorized_caller)
@@ -465,6 +464,7 @@ Monitor storage-related events:
 | 1.1     | Renamed `StorageKey` → `DataKey`; added doc comments to all variants; removed stale `// Replaced by StorageKey enum variants` comment; updated STORAGE.md                                                                                                                     |
 | 1.2     | Added `StorageKey::ProcessedRequest(Symbol)` in **temporary storage** for `request_id` idempotency in `deduct` and `batch_deduct`. Added `VaultError::DuplicateRequestId` (code 28). Added `is_request_processed(request_id)` view. TTL: threshold ~7 days, bump to ~30 days. |
 | 1.4     | **Buffer #5 — TTL bump on hot read paths.** Added public TTL constants (`LEDGERS_PER_DAY`, `INSTANCE_BUMP_THRESHOLD/AMOUNT`, `PERSISTENT_BUMP_THRESHOLD/AMOUNT`, `REQUEST_ID_BUMP_THRESHOLD/AMOUNT`). Instance TTL now bumped at **entry** of EVERY public view call (`balance`, `get_*`, `is_*`) so read-only usage keeps vault alive. Persistent `PendingPause/PendingUpgrade/PendingSweep` keys bumped by `get_pending_*` getters when the proposal exists. Write entrypoints continue to bump at exit. Added new `VaultError` codes 44-47 (proposal/timelock errors) and declared `pub mod timelock`. |
+| 1.5     | Issue #1110 — removed never-written `DataKey::Depositor(Address)` and `DataKey::AllowedDepositorsList`. `is_authorized_depositor()` now reads `Owner` + `StorageKey::AllowedDepositors` through the same private helper as `deposit()`, so the view and the deposit gate can no longer diverge (owner included; documented). |
 | Version | Change |
 |---------|--------|
 | 1.0 | Initial `StorageKey` enum with `Meta`, `AllowedDepositors`, `Admin`, `UsdcToken`, `Settlement`, `RevenuePool`, `MaxDeduct`, `Metadata(String)` |

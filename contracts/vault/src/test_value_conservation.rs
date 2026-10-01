@@ -377,8 +377,7 @@ fn batch_deduct_without_settlement_returns_error_before_mutation() {
 fn deduct_and_batch_deduct_without_usdc_return_not_initialized() {
     let env = Env::default();
     let settlement = Address::generate(&env);
-    let (client, owner, usdc) =
-        setup_vault_with_optional_settlement(&env, Some(settlement));
+    let (client, owner, usdc) = setup_vault_with_optional_settlement(&env, Some(settlement));
     env.as_contract(&client.address, || {
         env.storage().instance().remove(&DataKey::UsdcToken);
     });
