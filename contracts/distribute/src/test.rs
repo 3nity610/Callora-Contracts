@@ -384,13 +384,15 @@ fn require_auth_on_all_state_changing_functions() {
     let contract_addr = env.register(Distribute, ());
     let client = DistributeClient::new(&env, &contract_addr);
 
+    // init now requires admin auth; mock it only for this call
     env.mock_all_auths();
     client.init(&admin, &usdc_addr);
 
-    // Fund the contract for distribute tests
+    // Fund the contract for distribute tests while auths are still mocked
     let usdc_admin = token::StellarAssetClient::new(&env, &usdc_addr);
     usdc_admin.mint(&contract_addr, &1000);
 
+    // strip auths for the remaining tests below
     env.set_auths(&[]);
 
     // Non-admin should fail on all state-changing functions
@@ -472,7 +474,7 @@ fn no_unwrap_in_production_paths() {
 #[test]
 fn require_auth_on_init() {
     let env = Env::default();
-    // Do NOT mock all auths
+    // Do NOT mock all auths — init must now require admin auth
     let admin = Address::generate(&env);
     let usdc_addr = env
         .register_stellar_asset_contract_v2(admin.clone())
@@ -480,9 +482,10 @@ fn require_auth_on_init() {
     let contract_addr = env.register(Distribute, ());
     let client = DistributeClient::new(&env, &contract_addr);
 
-    // init should not fail on auth because it doesn't require auth
-    // (only admin is being set, no previous admin exists)
-    client.init(&admin, &usdc_addr);
+    // init must fail when no auth is provided (front-running protection)
+    env.set_auths(&[]);
+    let result = client.try_init(&admin, &usdc_addr);
+    assert!(result.is_err(), "init must require admin auth");
 }
 
 #[test]

@@ -80,6 +80,10 @@ impl Distribute {
 
     /// Initialize the distribute contract with an admin and the USDC token address.
     ///
+    /// Requires a signature from `admin` (`admin.require_auth()`), preventing
+    /// init front-running: only the intended admin can claim ownership at
+    /// deployment time.
+    ///
     /// Can only be called once. Rejects `usdc_token == contract address`.
     ///
     /// # Panics
@@ -89,6 +93,7 @@ impl Distribute {
     /// # Events
     /// Emits `init` with `admin` as topic and `usdc_token` as data.
     pub fn init(env: Env, admin: Address, usdc_token: Address) {
+        admin.require_auth();
         if env.storage().instance().has(&Symbol::new(&env, ADMIN_KEY)) {
             env.panic_with_error(DistributeError::AlreadyInitialized);
         }
