@@ -37,17 +37,6 @@ pub const BUMP_AMOUNT: u32 = 10_000;
 pub const LIFETIME_THRESHOLD: u32 = 1_000;
 
 // ---------------------------------------------------------------------------
-// Error strings
-// ---------------------------------------------------------------------------
-
-const ERR_UNAUTHORIZED: &str = "unauthorized: caller is not admin";
-const ERR_NOT_INITIALIZED: &str = "contract not initialized";
-const ERR_PAUSED: &str = "contract is paused";
-const ERR_AMOUNT_NOT_POSITIVE: &str = "amount must be positive";
-const ERR_AMOUNT_EXCEEDS_MAX_DISTRIBUTE: &str = "amount exceeds max_distribute";
-const ERR_INSUFFICIENT_BALANCE: &str = "insufficient USDC balance";
-
-// ---------------------------------------------------------------------------
 // Contract
 // ---------------------------------------------------------------------------
 
@@ -65,9 +54,8 @@ impl Distribute {
     /// Can only be called once. Rejects `usdc_token == contract address`.
     ///
     /// # Panics
-    /// * `"contract already initialized"` â€” called more than once.
-    /// * `"invalid config: usdc_token cannot be the contract itself"` â€” bad token address.
-    /// * `"invalid config: usdc_token cannot be the admin address"` â€” token/admin aliasing.
+    /// * `DistributeError::AlreadyInitialized` â€” called more than once.
+    /// * `DistributeError::InvalidConfig` â€” bad token address or token/admin aliasing.
     ///
     /// # Events
     /// Emits `init` with `admin` as topic and `usdc_token` as data.
@@ -139,7 +127,7 @@ impl Distribute {
     /// Return the current admin address.
     ///
     /// # Panics
-    /// * `"contract not initialized"` â€” called before `init`.
+    /// * `DistributeError::NotInitialized` â€” called before `init`.
     pub fn get_admin(env: Env) -> Address {
         Self::admin(&env)
     }
@@ -147,7 +135,7 @@ impl Distribute {
     /// Return the USDC token address configured for this contract.
     ///
     /// # Panics
-    /// * `"contract not initialized"` â€” called before `init`.
+    /// * `DistributeError::NotInitialized` â€” called before `init`.
     pub fn get_usdc_token(env: Env) -> Address {
         env.storage()
             .instance()
@@ -163,7 +151,7 @@ impl Distribute {
     /// The nominee must call `claim_admin` to complete.
     ///
     /// # Panics
-    /// * `ERR_UNAUTHORIZED` â€” caller is not the current admin.
+    /// * `DistributeError::Unauthorized` â€” caller is not the current admin.
     ///
     /// # Events
     /// Emits `admin_changed` with `(current, new_admin)` and
@@ -198,8 +186,8 @@ impl Distribute {
     /// Complete the admin transfer. Only the pending admin may call.
     ///
     /// # Panics
-    /// * `"no pending admin"` â€” no transfer is in progress.
-    /// * `"unauthorized: caller is not pending admin"` â€” wrong caller.
+    /// * `DistributeError::NoAdminTransferPending` â€” no transfer is in progress.
+    /// * `DistributeError::Unauthorized` â€” wrong caller.
     ///
     /// # Events
     /// Emits `admin_transfer_completed` with the new admin as topic.
@@ -227,8 +215,8 @@ impl Distribute {
     /// Cancel a pending admin transfer. Only the current admin may call.
     ///
     /// # Panics
-    /// * `ERR_UNAUTHORIZED` â€” caller is not the current admin.
-    /// * `"no admin transfer pending"` â€” no transfer in progress.
+    /// * `DistributeError::Unauthorized` â€” caller is not the current admin.
+    /// * `DistributeError::NoAdminTransferPending` â€” no transfer in progress.
     ///
     /// # Events
     /// Emits `admin_cancelled` with `(current_admin, pending_admin)`.
@@ -263,8 +251,8 @@ impl Distribute {
     /// Only the admin may call.
     ///
     /// # Panics
-    /// * `ERR_UNAUTHORIZED` â€” caller is not the current admin.
-    /// * `"contract already paused"` â€” contract is already paused.
+    /// * `DistributeError::Unauthorized` â€” caller is not the current admin.
+    /// * `DistributeError::AlreadyPaused` â€” contract is already paused.
     ///
     /// # Events
     /// Emits `pause_set` with `caller` as topic and `true` as data.
@@ -285,8 +273,8 @@ impl Distribute {
     /// Deactivate the circuit-breaker. Only the admin may call.
     ///
     /// # Panics
-    /// * `ERR_UNAUTHORIZED` â€” caller is not the current admin.
-    /// * `"contract not paused"` â€” contract is not currently paused.
+    /// * `DistributeError::Unauthorized` â€” caller is not the current admin.
+    /// * `DistributeError::NotPaused` â€” contract is not currently paused.
     ///
     /// # Events
     /// Emits `pause_set` with `caller` as topic and `false` as data.
@@ -329,8 +317,8 @@ impl Distribute {
     /// Set the maximum amount distributable per leg. Must be positive. Admin only.
     ///
     /// # Panics
-    /// * `ERR_UNAUTHORIZED` â€” caller is not the current admin.
-    /// * `"max_distribute must be positive"` â€” value â‰¤ 0.
+    /// * `DistributeError::Unauthorized` â€” caller is not the current admin.
+    /// * `DistributeError::CapNotPositive` â€” value â‰¤ 0.
     ///
     /// # Events
     /// Emits `set_max_distribute` with `(old_max, new_max)`.
@@ -362,12 +350,12 @@ impl Distribute {
     /// Distribute USDC from this contract to a single recipient.
     ///
     /// # Panics
-    /// * `ERR_UNAUTHORIZED` â€” caller is not the current admin.
-    /// * `ERR_PAUSED` â€” contract is paused.
-    /// * `ERR_AMOUNT_NOT_POSITIVE` â€” amount â‰¤ 0.
-    /// * `ERR_AMOUNT_EXCEEDS_MAX_DISTRIBUTE` â€” amount exceeds the cap.
-    /// * `"invalid recipient: cannot distribute to the contract itself"`.
-    /// * `ERR_INSUFFICIENT_BALANCE` â€” contract holds less than `amount`.
+    /// * `DistributeError::Unauthorized` â€” caller is not the current admin.
+    /// * `DistributeError::Paused` â€” contract is paused.
+    /// * `DistributeError::AmountNotPositive` â€” amount â‰¤ 0.
+    /// * `DistributeError::AmountExceedsMaxDistribute` â€” amount exceeds the cap.
+    /// * `DistributeError::InvalidRecipient`.
+    /// * `DistributeError::InsufficientBalance` â€” contract holds less than `amount`.
     ///
     /// # Events
     /// Emits `distribute_started` with `to` as topic and `amount` as data.
@@ -434,14 +422,15 @@ impl Distribute {
     /// - The sum of all amounts must not exceed the contract's USDC balance.
     ///
     /// # Panics
-    /// * `ERR_UNAUTHORIZED` â€” caller is not the current admin.
-    /// * `ERR_PAUSED` â€” contract is paused.
-    /// * `"batch is empty"` â€” no payment legs provided.
-    /// * `"batch exceeds max batch size"` â€” more than `MAX_BATCH_SIZE` legs.
-    /// * `ERR_AMOUNT_NOT_POSITIVE` â€” any leg has amount â‰¤ 0.
-    /// * `ERR_AMOUNT_EXCEEDS_MAX_DISTRIBUTE` â€” any leg exceeds per-leg cap.
-    /// * `"invalid recipient: cannot distribute to the contract itself"`.
-    /// * `ERR_INSUFFICIENT_BALANCE` â€” contract holds less than `total`.
+    /// * `DistributeError::Unauthorized` â€” caller is not the current admin.
+    /// * `DistributeError::Paused` â€” contract is paused.
+    /// * `DistributeError::BatchEmpty` â€” no payment legs provided.
+    /// * `DistributeError::BatchTooLarge` â€” more than `MAX_BATCH_SIZE` legs.
+    /// * `DistributeError::Overflow` - the sum of all leg amounts overflows `i128`.
+    /// * `DistributeError::AmountNotPositive` â€” any leg has amount â‰¤ 0.
+    /// * `DistributeError::AmountExceedsMaxDistribute` â€” any leg exceeds per-leg cap.
+    /// * `DistributeError::InvalidRecipient`.
+    /// * `DistributeError::InsufficientBalance` â€” contract holds less than `total`.
     ///
     /// # Events
     /// Emits `batch_distribute_started` with `caller` as topic and `(total, count)` as data.
@@ -487,7 +476,7 @@ impl Distribute {
             // Overflow-safe accumulation
             total = total
                 .checked_add(amount)
-                .unwrap_or_else(|| panic!("arithmetic overflow in batch_distribute total"));
+                .unwrap_or_else(|| env.panic_with_error(DistributeError::Overflow));
         }
 
         // Phase 2 â€” check total balance
@@ -529,7 +518,7 @@ impl Distribute {
     /// Return this contract's on-ledger USDC balance.
     ///
     /// # Panics
-    /// * `ERR_NOT_INITIALIZED` â€” called before `init`.
+    /// * `DistributeError::NotInitialized` â€” called before `init`.
     pub fn balance(env: Env) -> i128 {
         let usdc_addr: Address = env
             .storage()
@@ -547,7 +536,7 @@ impl Distribute {
     /// Admin-gated contract upgrade. Replaces the WASM and persists the version.
     ///
     /// # Panics
-    /// * `ERR_UNAUTHORIZED` â€” caller is not the current admin.
+    /// * `DistributeError::Unauthorized` â€” caller is not the current admin.
     ///
     /// # Events
     /// Emits `upgraded` with `admin` as topic and `new_wasm_hash` as data.

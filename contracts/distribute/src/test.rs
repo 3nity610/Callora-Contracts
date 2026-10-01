@@ -691,6 +691,33 @@ fn claim_admin_alias_works() {
 }
 
 #[test]
+fn batch_distribute_total_overflow_returns_typed_error() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let admin = Address::generate(&env);
+    let usdc_addr = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
+    let contract_addr = env.register(Distribute, ());
+    let client = DistributeClient::new(&env, &contract_addr);
+
+    client.init(&admin, &usdc_addr);
+
+    // The default per-leg cap is `i128::MAX`, so each leg below is individually
+    // valid yet their accumulated total overflows `i128`. The contract must
+    // surface `DistributeError::Overflow` rather than a string panic.
+    let mut payments: Vec<(Address, i128)> = Vec::new(&env);
+    payments.push_back((Address::generate(&env), i128::MAX));
+    payments.push_back((Address::generate(&env), i128::MAX));
+
+    let result = client.try_batch_distribute(&admin, &payments);
+    assert_eq!(
+        result,
+        Err(Ok(crate::errors::DistributeError::Overflow))
+    );
+}
+
+#[test]
 fn get_paused_returns_state() {
     let env = Env::default();
     env.mock_all_auths();
