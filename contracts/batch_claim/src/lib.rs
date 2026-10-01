@@ -583,6 +583,27 @@ impl CalloraBatchClaim {
             return Err(BatchClaimError::AlreadySettled);
         }
 
+        // Consume the claim id with a long-lived tombstone so it can never be
+        // reissued, and release the owner reservation.
+        let consumed_key = StorageKey::ClaimConsumed(record.claim_id.clone());
+        env.storage().persistent().set(&consumed_key, &true);
+        env.storage().persistent().extend_ttl(
+            &consumed_key,
+            CONSUMED_TOMBSTONE_THRESHOLD,
+            CONSUMED_TOMBSTONE_BUMP,
+        );
+
+        // Decrement the total-claims counter with checked subtraction.
+        let count: u32 = env
+            .storage()
+            .instance()
+            .get(&StorageKey::TotalClaims)
+            .unwrap_or(0);
+        env.storage().instance().set(
+            &StorageKey::TotalClaims,
+            &count.checked_sub(1).ok_or(BatchClaimError::Overflow)?,
+        );
+
         env.storage().persistent().remove(&key);
         Self::bump_instance(&env);
         env.events()
