@@ -63,6 +63,39 @@ pub fn event_initialized(env: &Env) -> Symbol {
 pub fn event_payment_received(env: &Env) -> Symbol {
     Symbol::new(env, "payment_received")
 }
+/// Returns the Symbol for the `supported_token_added` event topic.
+pub fn event_supported_token_added(env: &Env) -> Symbol {
+    Symbol::new(env, "supported_token_added")
+}
+
+/// Returns the Symbol for the `supported_token_removed` event topic.
+pub fn event_supported_token_removed(env: &Env) -> Symbol {
+    Symbol::new(env, "supported_token_removed")
+}
+
+/// Emit `supported_token_added` when an admin enables a payment token.
+pub fn emit_supported_token_added(env: &Env, caller: &Address, token: &Address) {
+    env.events().publish(
+        (
+            event_supported_token_added(env),
+            caller.clone(),
+            token.clone(),
+        ),
+        token.clone(),
+    );
+}
+
+/// Emit `supported_token_removed` when an admin disables a payment token.
+pub fn emit_supported_token_removed(env: &Env, caller: &Address, token: &Address) {
+    env.events().publish(
+        (
+            event_supported_token_removed(env),
+            caller.clone(),
+            token.clone(),
+        ),
+        token.clone(),
+    );
+}
 
 /// Returns the Symbol for the `"balance_credited"` event topic.
 ///

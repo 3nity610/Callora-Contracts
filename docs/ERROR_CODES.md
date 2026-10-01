@@ -112,6 +112,11 @@ must not be reassigned once released.
 | 40 | `InvalidVault` | Settlement | Vault address is invalid |
 | 41 | `NoVaultRotationPending` | Settlement | No vault rotation is pending |
 | 42 | `BroadcastMessageTooLong` | Settlement | Admin broadcast message exceeds the maximum length |
+| 43 | `CrossTenantBatch` | Settlement | Batch settlement mixed multiple developers |
+| 44 | `NoUpgradePending` | Settlement | No upgrade proposal is currently pending |
+| 45 | `ZeroWasmHash` | Settlement | Proposed WASM hash is all-zero (rejected) |
+| 46 | `UpgradeTimelockNotExpired` | Settlement | Upgrade timelock delay has not yet elapsed |
+| 47 | `UnsupportedToken` | Settlement | Token is not enabled for settlement payments |
 
 ## Revenue Pool
 

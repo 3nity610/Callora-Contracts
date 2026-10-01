@@ -1396,6 +1396,31 @@ Side effect: developer balance map entry for `GDEV...` is incremented by
 
 ---
 
+### `supported_token_added`
+
+Emitted when the admin registers a token for settlement payments. The event is
+also emitted when `set_usdc_token()` or the one-time storage migration
+backfills the configured USDC token.
+
+| Index   | Location | Type    | Description |
+|---------|----------|---------|-------------|
+| topic 0 | topics   | Symbol  | `"supported_token_added"` |
+| topic 1 | topics   | Address | Admin that enabled the token |
+| topic 2 | topics   | Address | Token contract address |
+| data    | data     | Address | Token contract address |
+
+### `supported_token_removed`
+
+Emitted when the admin removes a registered token. Existing developer balances
+remain stored, but future single and batch payments in that token are rejected.
+
+| Index   | Location | Type    | Description |
+|---------|----------|---------|-------------|
+| topic 0 | topics   | Symbol  | `"supported_token_removed"` |
+| topic 1 | topics   | Address | Admin that disabled the token |
+| topic 2 | topics   | Address | Token contract address |
+| data    | data     | Address | Token contract address |
+
 ### `balance_credited`
 
 Emitted by `receive_payment()` **only** when `to_pool = false`, immediately

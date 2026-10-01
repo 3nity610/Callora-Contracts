@@ -138,6 +138,7 @@ impl CalloraSettlement {
     ) {
         caller.require_auth();
         Self::require_authorized_caller(env.clone(), caller.clone());
+        Self::require_supported_token(&env, &token);
         if amount <= 0 {
             env.panic_with_error(SettlementError::AmountNotPositive);
         }
@@ -271,6 +272,7 @@ impl CalloraSettlement {
         Self::require_authorized_caller(env.clone(), caller.clone());
 
         let n = items.len();
+        Self::require_supported_token(&env, &token);
         if n == 0 {
             env.panic_with_error(SettlementError::BatchEmpty);
         }
@@ -486,6 +488,46 @@ impl CalloraSettlement {
         env.storage()
             .instance()
             .set(&StorageKey::Usdc, &usdc_address);
+        Self::add_supported_token_internal(&env, &caller, &usdc_address);
+    }
+
+    /// Enable a token for settlement payments. Admin only.
+    pub fn add_supported_token(env: Env, caller: Address, token: Address) {
+        caller.require_auth();
+        let current_admin = Self::get_admin(env.clone()).unwrap();
+        if caller != current_admin {
+            env.panic_with_error(SettlementError::Unauthorized);
+        }
+        Self::add_supported_token_internal(&env, &caller, &token);
+    }
+
+    /// Disable a token for future settlement payments. Existing balances are retained.
+    pub fn remove_supported_token(env: Env, caller: Address, token: Address) {
+        caller.require_auth();
+        let current_admin = Self::get_admin(env.clone()).unwrap();
+        if caller != current_admin {
+            env.panic_with_error(SettlementError::Unauthorized);
+        }
+        let key = StorageKey::SupportedToken(token.clone());
+        if env.storage().persistent().has(&key) {
+            env.storage().persistent().remove(&key);
+            events::emit_supported_token_removed(&env, &caller, &token);
+        }
+    }
+
+    /// Check whether a token is registered for settlement payments.
+    pub fn is_supported_token(env: Env, token: Address) -> bool {
+        let key = StorageKey::SupportedToken(token);
+        if env.storage().persistent().has(&key) {
+            env.storage().persistent().extend_ttl(
+                &key,
+                PERSISTENT_BUMP_THRESHOLD,
+                PERSISTENT_BUMP_AMOUNT,
+            );
+            true
+        } else {
+            false
+        }
     }
 
     fn get_usdc_token(env: Env) -> Result<Address, SettlementError> {
@@ -1555,6 +1597,27 @@ impl CalloraSettlement {
 
     // â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â” Internal helpers â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
 
+    fn require_supported_token(env: &Env, token: &Address) {
+        let key = StorageKey::SupportedToken(token.clone());
+        if !env.storage().persistent().has(&key) {
+            env.panic_with_error(SettlementError::UnsupportedToken);
+        }
+        env.storage().persistent().extend_ttl(
+            &key,
+            PERSISTENT_BUMP_THRESHOLD,
+            PERSISTENT_BUMP_AMOUNT,
+        );
+    }
+
+    fn add_supported_token_internal(env: &Env, caller: &Address, token: &Address) {
+        let key = StorageKey::SupportedToken(token.clone());
+        if !env.storage().persistent().has(&key) {
+            env.storage().persistent().set(&key, &true);
+            env.storage().persistent().extend_ttl(&key, 50_000, 50_000);
+            events::emit_supported_token_added(env, caller, token);
+        }
+    }
+
     /// Abort with `Unauthorized` unless `caller` is the registered vault or admin.
     fn require_authorized_caller(env: Env, caller: Address) {
         let vault = Self::get_vault(env.clone()).unwrap();
@@ -1581,7 +1644,6 @@ impl CalloraSettlement {
         index.insert(pos, addr);
     }
 }
-
 #[cfg(test)]
 mod test_freeze;
 #[cfg(test)]

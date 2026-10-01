@@ -37,6 +37,8 @@ fn test_two_tokens_independent_balances() {
     let (token_b, _, _) = create_token(&env, &admin);
 
     client.init(&admin, &vault);
+    client.add_supported_token(&admin, &token_a);
+    client.add_supported_token(&admin, &token_b);
 
     // Credit token_a to developer
     client.receive_payment(
@@ -91,6 +93,8 @@ fn test_two_tokens_two_developers() {
     let (token_b, _, _) = create_token(&env, &admin);
 
     client.init(&admin, &vault);
+    client.add_supported_token(&admin, &token_a);
+    client.add_supported_token(&admin, &token_b);
 
     // dev1 gets token_a, dev2 gets token_b
     client.receive_payment(
@@ -135,6 +139,8 @@ fn test_withdraw_asserts_token() {
     let (token_b, token_b_client, token_b_sac) = create_token(&env, &admin);
 
     client.init(&admin, &vault);
+    client.add_supported_token(&admin, &token_a);
+    client.add_supported_token(&admin, &token_b);
 
     // Credit both tokens to developer
     client.receive_payment(
@@ -352,6 +358,7 @@ fn test_batch_receive_payment_with_token() {
     client.init(&admin, &vault);
 
     let mut items: soroban_sdk::Vec<(Address, i128)> = soroban_sdk::Vec::new(&env);
+    client.add_supported_token(&admin, &token);
     items.push_back((dev1.clone(), 100i128));
     items.push_back((dev2.clone(), 200i128));
 
@@ -359,4 +366,112 @@ fn test_batch_receive_payment_with_token() {
 
     assert_eq!(client.get_developer_balance(&dev1, &token), 100i128);
     assert_eq!(client.get_developer_balance(&dev2, &token), 200i128);
+}
+
+// Append tests proving that an unregistered token is rejected by both payment entry points without changing balances, and that configured USDC is backfilled by migrate_v1_to_v2 even when the storage version is already V2.
+#[test]
+fn test_unsupported_tokens_rejected_for_single_and_batch_payments() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let admin = Address::generate(&env);
+    let vault = Address::generate(&env);
+    let developer = Address::generate(&env);
+    let addr = env.register(CalloraSettlement, ());
+    let client = CalloraSettlementClient::new(&env, &addr);
+    let (token, _, _) = create_token(&env, &admin);
+
+    client.init(&admin, &vault);
+
+    let single = client.try_receive_payment(
+        &vault,
+        &100i128,
+        &false,
+        &Some(developer.clone()),
+        &token,
+        &1u32,
+    );
+    assert!(single.is_err());
+    assert_eq!(client.get_developer_balance(&developer, &token), 0i128);
+
+    let items = soroban_sdk::vec![&env, (developer.clone(), 100i128)];
+    let batch = client.try_batch_receive_payment(&vault, &items, &token, &1u32);
+    assert!(batch.is_err());
+    assert_eq!(client.get_developer_balance(&developer, &token), 0i128);
+}
+
+#[test]
+fn test_migration_registers_configured_usdc_for_existing_instances() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let admin = Address::generate(&env);
+    let vault = Address::generate(&env);
+    let addr = env.register(CalloraSettlement, ());
+    let client = CalloraSettlementClient::new(&env, &addr);
+    let (usdc, _, _) = create_token(&env, &admin);
+
+    client.init(&admin, &vault);
+    client.set_usdc_token(&admin, &usdc);
+    client.remove_supported_token(&admin, &usdc);
+    env.as_contract(&addr, || {
+        env.storage()
+            .instance()
+            .set(&StorageKey::StorageVersion, &crate::STORAGE_VERSION_V2);
+    });
+
+    client.migrate_v1_to_v2(&admin);
+    assert!(client.is_supported_token(&usdc));
+}
+
+#[test]
+fn test_removed_token_blocks_future_credits_and_keeps_existing_balance() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let admin = Address::generate(&env);
+    let vault = Address::generate(&env);
+    let developer = Address::generate(&env);
+    let addr = env.register(CalloraSettlement, ());
+    let client = CalloraSettlementClient::new(&env, &addr);
+    let (token, _, _) = create_token(&env, &admin);
+
+    client.init(&admin, &vault);
+    client.add_supported_token(&admin, &token);
+    client.receive_payment(
+        &vault,
+        &100i128,
+        &false,
+        &Some(developer.clone()),
+        &token,
+        &1u32,
+    );
+    client.remove_supported_token(&admin, &token);
+
+    let result = client.try_receive_payment(
+        &vault,
+        &50i128,
+        &false,
+        &Some(developer.clone()),
+        &token,
+        &2u32,
+    );
+    assert!(result.is_err());
+    assert_eq!(client.get_developer_balance(&developer, &token), 100i128);
+}
+
+#[test]
+fn test_supported_token_updates_require_admin() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let admin = Address::generate(&env);
+    let attacker = Address::generate(&env);
+    let vault = Address::generate(&env);
+    let addr = env.register(CalloraSettlement, ());
+    let client = CalloraSettlementClient::new(&env, &addr);
+    let token = Address::generate(&env);
+
+    client.init(&admin, &vault);
+    assert!(client.try_add_supported_token(&attacker, &token).is_err());
+
+    client.add_supported_token(&admin, &token);
+    assert!(client.try_remove_supported_token(&attacker, &token).is_err());
+    assert!(client.is_supported_token(&token));
 }

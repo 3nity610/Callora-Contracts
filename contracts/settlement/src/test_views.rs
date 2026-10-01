@@ -113,6 +113,7 @@ fn test_pagination_fewer_than_limit() {
     let client = CalloraSettlementClient::new(&env, &addr);
     client.init(&admin, &vault);
     let token = Address::generate(&env);
+    client.add_supported_token(&admin, &token);
 
     // 5 developers
     for _ in 0..5 {
@@ -136,6 +137,7 @@ fn test_pagination_exactly_limit() {
     let client = CalloraSettlementClient::new(&env, &addr);
     client.init(&admin, &vault);
     let token = Address::generate(&env);
+    client.add_supported_token(&admin, &token);
 
     // 10 developers
     let mut devs = soroban_sdk::Vec::new(&env);
@@ -167,6 +169,7 @@ fn test_pagination_more_than_limit() {
     let client = CalloraSettlementClient::new(&env, &addr);
     client.init(&admin, &vault);
     let token = Address::generate(&env);
+    client.add_supported_token(&admin, &token);
 
     // 15 developers
     for _ in 0..15 {
@@ -195,6 +198,7 @@ fn test_pagination_stable_ordering() {
     let client = CalloraSettlementClient::new(&env, &addr);
     client.init(&admin, &vault);
     let token = Address::generate(&env);
+    client.add_supported_token(&admin, &token);
 
     for _ in 0..8 {
         let dev = Address::generate(&env);
@@ -246,6 +250,7 @@ fn test_pagination_invalid_cursor() {
     let client = CalloraSettlementClient::new(&env, &addr);
     client.init(&admin, &vault);
     let token = Address::generate(&env);
+    client.add_supported_token(&admin, &token);
 
     for _ in 0..5 {
         let dev = Address::generate(&env);

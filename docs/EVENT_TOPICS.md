@@ -137,8 +137,10 @@ Source: [`contracts/settlement/src/events.rs`](../contracts/settlement/src/event
 | 18 | `developer_min_balance_changed` | `event_developer_min_balance_changed` | Developer minimum balance threshold set  |
 | 19 | `price_set`                  | `event_price_set`                  | Offering price created or changed          |
 | 20 | `price_removed`              | `event_price_removed`              | Offering price removed                     |
+| 21 | `supported_token_added` | `event_supported_token_added` | Admin enables a settlement payment token |
+| 22 | `supported_token_removed` | `event_supported_token_removed` | Admin disables future payments in a token |
 
-**Total: 20 topics**
+**Total: 22 topics**
 
 ---
 

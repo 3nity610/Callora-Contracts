@@ -100,6 +100,7 @@ pub fn storage_version(env: &Env) -> u32 {
 pub fn migrate_v1_to_v2(env: &Env, caller: &Address) {
     caller.require_auth();
     require_admin(env, caller);
+    register_configured_usdc(env, caller);
 
     if storage_version(env) >= STORAGE_VERSION_V2 {
         return;
@@ -168,6 +169,7 @@ pub fn migrate_v1_to_v2_page(
 ) -> (u32, bool) {
     caller.require_auth();
     require_admin(env, caller);
+    register_configured_usdc(env, caller);
 
     if storage_version(env) >= STORAGE_VERSION_V2 {
         return (0, true);
@@ -212,6 +214,25 @@ pub fn migrate_v1_to_v2_page(
 }
 
 // ─── Internal helpers ─────────────────────────────────────────────────────────
+fn register_configured_usdc(env: &Env, caller: &Address) {
+    let instance = env.storage().instance();
+    if instance
+        .get::<_, bool>(&StorageKey::SupportedTokensMigrated)
+        .unwrap_or(false)
+    {
+        return;
+    }
+    let Some(usdc_token) = instance.get::<_, Address>(&StorageKey::Usdc) else {
+        return;
+    };
+    let key = StorageKey::SupportedToken(usdc_token.clone());
+    if !env.storage().persistent().has(&key) {
+        env.storage().persistent().set(&key, &true);
+        env.storage().persistent().extend_ttl(&key, 50_000, 50_000);
+        crate::events::emit_supported_token_added(env, caller, &usdc_token);
+    }
+    instance.set(&StorageKey::SupportedTokensMigrated, &true);
+}
 
 /// Abort with `NotInitialized` if the contract has not been initialised, or
 /// `Unauthorized` if `caller` is not the stored admin.

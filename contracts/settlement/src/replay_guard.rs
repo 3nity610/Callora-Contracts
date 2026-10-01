@@ -102,6 +102,7 @@ mod tests {
         let client = CalloraSettlementClient::new(&env, &addr);
         let d = dev(&env);
         let t = token(&env);
+        client.add_supported_token(&_admin, &t);
 
         client.receive_payment(&vault, &100i128, &false, &Some(d.clone()), &t, &10u32);
         assert_eq!(client.get_developer_balance(&d, &t), 100);
@@ -117,6 +118,7 @@ mod tests {
         let client = CalloraSettlementClient::new(&env, &addr);
         let d = dev(&env);
         let t = token(&env);
+        client.add_supported_token(&_admin, &t);
 
         client.receive_payment(&vault, &100i128, &false, &Some(d.clone()), &t, &10u32);
 
@@ -132,6 +134,7 @@ mod tests {
         let client = CalloraSettlementClient::new(&env, &addr);
         let d = dev(&env);
         let t = token(&env);
+        client.add_supported_token(&_admin, &t);
 
         client.receive_payment(&vault, &100i128, &false, &Some(d.clone()), &t, &20u32);
 
@@ -148,6 +151,7 @@ mod tests {
         let d1 = dev(&env);
         let d2 = dev(&env);
         let t = token(&env);
+        client.add_supported_token(&_admin, &t);
 
         client.receive_payment(&vault, &100i128, &false, &Some(d1.clone()), &t, &10u32);
         client.receive_payment(&vault, &200i128, &false, &Some(d2.clone()), &t, &10u32);
@@ -163,6 +167,7 @@ mod tests {
         let client = CalloraSettlementClient::new(&env, &addr);
         let d = dev(&env);
         let t = token(&env);
+        client.add_supported_token(&_admin, &t);
 
         // Pool seq advances to 50
         client.receive_payment(&vault, &1000i128, &true, &None, &t, &50u32);
@@ -186,6 +191,7 @@ mod tests {
         let (env, addr, vault, _admin) = setup();
         let client = CalloraSettlementClient::new(&env, &addr);
         let t = token(&env);
+        client.add_supported_token(&_admin, &t);
 
         client.receive_payment(&vault, &1000i128, &true, &None, &t, &20u32);
         assert_eq!(client.get_global_pool().total_balance, 1000);
@@ -209,6 +215,7 @@ mod tests {
         let client = CalloraSettlementClient::new(&env, &addr);
         let d = dev(&env);
         let t = token(&env);
+        client.add_supported_token(&_admin, &t);
 
         client.receive_payment(&vault, &500i128, &false, &Some(d.clone()), &t, &42u32);
         assert_eq!(client.get_developer_balance(&d, &t), 500);
@@ -233,6 +240,7 @@ mod tests {
         let d1 = dev(&env);
         let d2 = dev(&env);
         let t = token(&env);
+        client.add_supported_token(&_admin, &t);
 
         let items = soroban_sdk::vec![&env, (d1.clone(), 100i128), (d2.clone(), 200i128)];
 

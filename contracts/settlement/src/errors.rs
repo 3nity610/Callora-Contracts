@@ -54,6 +54,7 @@ use soroban_sdk::contracterror;
 /// | 44   | NoUpgradePending             | No upgrade proposal is currently pending             |
 /// | 45   | ZeroWasmHash                 | Proposed WASM hash is all-zero (rejected)            |
 /// | 46   | UpgradeTimelockNotExpired    | Upgrade timelock delay has not yet elapsed           |
+/// | 47   | UnsupportedToken             | Token is not enabled for settlement payments         |
 #[contracterror]
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[repr(u32)]
@@ -113,4 +114,6 @@ pub enum SettlementError {
     ZeroWasmHash = 45,
     /// Upgrade timelock delay has not yet elapsed.
     UpgradeTimelockNotExpired = 46,
+    /// Token is not enabled for settlement payments.
+    UnsupportedToken = 47,
 }

@@ -60,6 +60,10 @@ pub enum StorageKey {
     Price(soroban_sdk::String),
     /// Pending timelocked WASM upgrade proposal.
     PendingUpgrade,
+    /// Whether a token contract is accepted for settlement payments.
+    SupportedToken(Address),
+    /// Whether the configured-USDC allowlist backfill has run.
+    SupportedTokensMigrated,
 }
 
 /// Read-only preview of a developer claim/withdrawal.

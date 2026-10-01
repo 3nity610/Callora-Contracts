@@ -59,6 +59,7 @@ fn test_get_global_pool_bumps_instance_ttl() {
 
     // Credit into the pool so total_balance is non-zero.
     let token = Address::generate(&env);
+    client.add_supported_token(&_admin, &token);
     client.receive_payment(&vault, &1000i128, &true, &None, &token, &1u32);
 
     let seq = env.ledger().sequence();

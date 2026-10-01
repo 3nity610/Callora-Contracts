@@ -23,6 +23,25 @@ mod event_tests {
     use soroban_sdk::{Address, Env, IntoVal, Symbol};
 
     // ─── Helpers ─────────────────────────────────────────────────────────────
+    #[test]
+    fn test_supported_token_registry_events() {
+        let (env, contract, admin, _vault, _) = setup();
+        let client = CalloraSettlementClient::new(&env, &contract);
+        let token = Address::generate(&env);
+
+        client.add_supported_token(&admin, &token);
+        let added = filter_by_topic(&env, &env.events().all(), "supported_token_added");
+        assert_eq!(added.len(), 1);
+        assert_eq!(topic1_addr(&env, &added[0]), admin);
+        assert_eq!(topic2_addr(&env, &added[0]), token);
+
+        env.events().all();
+        client.remove_supported_token(&admin, &token);
+        let removed = filter_by_topic(&env, &env.events().all(), "supported_token_removed");
+        assert_eq!(removed.len(), 1);
+        assert_eq!(topic1_addr(&env, &removed[0]), admin);
+        assert_eq!(topic2_addr(&env, &removed[0]), token);
+    }
 
     /// Spin up a registered, initialized settlement contract and return
     /// `(env, contract_addr, admin, vault, token)`.
@@ -36,7 +55,7 @@ mod event_tests {
         let contract = env.register(CalloraSettlement, ());
         let client = CalloraSettlementClient::new(&env, &contract);
         client.init(&admin, &vault);
-        // Discard init events so subsequent tests start from a clean slate.
+        client.add_supported_token(&admin, &token);
         env.events().all();
         (env, contract, admin, vault, token)
     }
