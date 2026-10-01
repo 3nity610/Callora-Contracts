@@ -95,6 +95,13 @@ pub fn event_ownership_accepted(env: &Env) -> Symbol {
     Symbol::new(env, "ownership_accepted")
 }
 
+/// Returns the Symbol for the `"ownership_cancelled"` event topic.
+///
+/// Emitted when the current owner cancels a pending ownership transfer.
+pub fn event_ownership_cancelled(env: &Env) -> Symbol {
+    Symbol::new(env, "ownership_cancelled")
+}
+
 /// Returns the Symbol for the `"withdraw"` event topic.
 ///
 /// Emitted when the vault owner withdraws funds from the vault.
@@ -453,6 +460,13 @@ mod tests {
         let env = soroban_sdk::Env::default();
         let sym = event_ownership_accepted(&env);
         assert_eq!(sym, Symbol::new(&env, "ownership_accepted"));
+    }
+
+    #[test]
+    fn test_event_ownership_cancelled_bytes() {
+        let env = soroban_sdk::Env::default();
+        let sym = event_ownership_cancelled(&env);
+        assert_eq!(sym, Symbol::new(&env, "ownership_cancelled"));
     }
 
     #[test]

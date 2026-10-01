@@ -1512,6 +1512,33 @@ impl CalloraVault {
         Ok(())
     }
 
+    /// Cancel a pending admin transfer (current admin only).
+    ///
+    /// Cancellation removes the nominee before returning, so the previously
+    /// nominated address can no longer accept this transfer.
+    pub fn cancel_admin_transfer(env: Env, caller: Address) -> Result<(), VaultError> {
+        Self::require_admin(&env, &caller)?;
+        if env
+            .storage()
+            .instance()
+            .get::<_, Address>(&StorageKey::PendingAdmin)
+            .is_none()
+        {
+            return Err(VaultError::NoAdminTransferPending);
+        }
+        env.storage().instance().remove(&StorageKey::PendingAdmin);
+        env.events().publish(
+            (
+                events::event_admin_cancelled(&env),
+                events::event_version_v1(&env),
+                caller,
+            ),
+            (),
+        );
+        Self::bump_instance_ttl(&env);
+        Ok(())
+    }
+
     /// Transfer ownership (two-step) — initiate.
     ///
     /// # Errors
@@ -1545,25 +1572,48 @@ impl CalloraVault {
     ///
     /// The pending owner must authorize this call to finalize the transfer.
     ///
-    /// # Panics
-    /// If no ownership transfer is pending (`DataKey::PendingOwner` is absent).
-    ///
-    /// The historic `VaultError::NoOwnershipTransferPending` variant was removed
-    /// from the stable error interface (code 24 reserved); an empty pending
-    /// state is a caller error and is surfaced as a panic, consistent with the
-    /// rest of the vault's handling of invariant-breaking inputs.
+    /// # Errors
+    /// - [`VaultError::NoOwnershipTransferPending`] — no transfer is staged.
     pub fn accept_ownership(env: Env) -> Result<(), VaultError> {
         let new_owner: Address = env
             .storage()
             .instance()
             .get::<_, Address>(&DataKey::PendingOwner)
-            .unwrap_or_else(|| panic!("no ownership transfer pending"));
+            .ok_or(VaultError::NoOwnershipTransferPending)?;
         new_owner.require_auth();
         env.storage().instance().set(&DataKey::Owner, &new_owner);
         env.storage().instance().remove(&DataKey::PendingOwner);
         Self::bump_instance(&env);
         env.events()
             .publish((events::event_ownership_accepted(&env), events::event_version_v1(&env), new_owner), ());
+        Ok(())
+    }
+
+    /// Cancel a pending ownership transfer (current owner only).
+    ///
+    /// Cancellation removes the nominee before returning, so the previously
+    /// nominated address can no longer accept this transfer.
+    pub fn cancel_ownership_transfer(env: Env, caller: Address) -> Result<(), VaultError> {
+        caller.require_auth();
+        Self::require_owner(env.clone(), caller.clone())?;
+        if env
+            .storage()
+            .instance()
+            .get::<_, Address>(&DataKey::PendingOwner)
+            .is_none()
+        {
+            return Err(VaultError::NoOwnershipTransferPending);
+        }
+        env.storage().instance().remove(&DataKey::PendingOwner);
+        env.events().publish(
+            (
+                events::event_ownership_cancelled(&env),
+                events::event_version_v1(&env),
+                caller,
+            ),
+            (),
+        );
+        Self::bump_instance_ttl(&env);
         Ok(())
     }
 
@@ -2504,6 +2554,9 @@ mod test_recovery_idempotency;
 /// call sites that fire zero, twice, or with the wrong topic count / version.
 #[cfg(test)]
 mod test_event_schema;
+
+#[cfg(test)]
+mod test_admin_transfers;
 
 // #[cfg(test)]
 // mod test_gas_budget;
