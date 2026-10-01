@@ -377,7 +377,12 @@ impl CalloraEscrow {
         Ok(())
     }
 
-    /// Pause the escrow contract. Cool-off-guarded critical action (tag `"pause"`).
+    /// Pause the escrow contract. **Not** cooldown-gated — circuit-breakers
+    /// must be available instantly.
+    ///
+    /// An attacker who triggers an unpause (or the admin toggling during an
+    /// incident) must never be able to hold the contract live for an entire
+    /// cooldown window. `unpause` and `rotate_signer` retain their cooldowns.
     ///
     /// # Parameters
     /// * `caller` -- Must be the current admin; must authorize.
@@ -385,7 +390,6 @@ impl CalloraEscrow {
     /// # Errors
     /// * [`EscrowError::Unauthorized`] -- caller is not the current admin.
     /// * [`EscrowError::NotInitialized`] -- contract not initialized.
-    /// * [`EscrowError::CooldownActive`] -- a `pause` ran within the cool-off window.
     ///
     /// # Events
     /// Emits `action` with `caller` as topic and the `"pause"` tag as data.
@@ -393,7 +397,6 @@ impl CalloraEscrow {
         Self::extend_instance_ttl(&env);
         Self::require_admin(&env, &caller)?;
         let action = Symbol::new(&env, ACTION_PAUSE);
-        admin::guard(&env, &action)?;
 
         env.storage().instance().set(&StorageKey::Paused, &true);
 

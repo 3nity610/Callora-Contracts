@@ -5,7 +5,7 @@
 //! two-step admin rotation, signer rotation events, and the read-only views.
 
 use crate::admin::{DEFAULT_COOLDOWN_SECS, MAX_COOLDOWN_SECS, MIN_COOLDOWN_SECS};
-use crate::{CalloraHot, CalloraHotClient, HotError, ACTION_PAUSE, ACTION_ROTATE};
+use crate::{CalloraHot, CalloraHotClient, HotError, ACTION_ROTATE};
 use soroban_sdk::testutils::Events as _;
 use soroban_sdk::testutils::{Address as _, Ledger as _};
 use soroban_sdk::{Address, Env, Symbol};
@@ -125,53 +125,88 @@ fn test_set_cooldown_non_admin_rejected() {
 }
 
 // ===========================================================================
-// Cool-off enforcement
+// Cool-off enforcement — pause is exempt; unpause and rotate are gated
 // ===========================================================================
 
 #[test]
-fn test_action_available_immediately_after_init() {
+fn test_pause_available_immediately_after_init() {
     let (env, _admin, _signer, client) = setup(Some(60));
-    let pause = Symbol::new(&env, ACTION_PAUSE);
-    assert!(client.is_ready(&pause));
-    assert_eq!(client.cooldown_remaining(&pause), 0);
+    // pause has no cooldown tag — it is always ready.
+    let unpause = Symbol::new(&env, crate::ACTION_UNPAUSE);
+    assert!(client.is_ready(&unpause));
+    assert_eq!(client.cooldown_remaining(&unpause), 0);
 }
 
+/// pause must succeed immediately after an unpause, even while the unpause
+/// cooldown is still active. This is the core circuit-breaker property.
 #[test]
-fn test_second_action_within_window_rejected() {
+fn test_pause_succeeds_immediately_after_unpause_cooldown_armed() {
     let (_env, admin, _signer, client) = setup(Some(300));
     client.pause(&admin);
-    assert!(client.is_paused());
-
-    // Immediately unpausing is a different action tag → allowed.
+    // Unpause arms its own cooldown at t=0.
     client.unpause(&admin);
     assert!(!client.is_paused());
 
-    // A second pause is now blocked by the cooldown window.
-    let res = client.try_pause(&admin);
-    assert_eq!(res, Err(Ok(HotError::CooldownActive)));
+    // Advance 0 seconds — unpause cooldown is still fully active.
+    // pause must succeed regardless.
+    client.pause(&admin);
+    assert!(client.is_paused());
 }
 
+/// pause must succeed immediately after rotate_signer, even within the
+/// rotate cooldown window.
 #[test]
-fn test_action_allowed_after_window_elapses() {
+fn test_pause_succeeds_immediately_after_rotate() {
     let (env, admin, _signer, client) = setup(Some(300));
-    // Pause, then unpause so the contract is not paused; this arms both cooldowns at t=0.
+    let new_signer = Address::generate(&env);
+    client.rotate_signer(&admin, &new_signer);
+
+    // rotate cooldown is still active (0 seconds elapsed).
+    let rotate = Symbol::new(&env, crate::ACTION_ROTATE);
+    assert!(client.cooldown_remaining(&rotate) > 0);
+
+    // pause is unaffected — must succeed immediately.
+    client.pause(&admin);
+    assert!(client.is_paused());
+}
+
+/// A second pause without an intervening unpause still returns AlreadyPaused,
+/// because the state guard fires before any cooldown logic would.
+#[test]
+fn test_double_pause_returns_already_paused_not_cooldown() {
+    let (_env, admin, _signer, client) = setup(Some(300));
+    client.pause(&admin);
+    let res = client.try_pause(&admin);
+    assert_eq!(res, Err(Ok(HotError::AlreadyPaused)));
+}
+
+/// After unpause, re-pausing immediately succeeds (no cooldown gate on pause).
+#[test]
+fn test_pause_after_unpause_at_zero_delay_succeeds() {
+    let (_env, admin, _signer, client) = setup(Some(300));
     client.pause(&admin);
     client.unpause(&admin);
+    // Immediately re-pause — must succeed without advancing time.
+    client.pause(&admin);
+    assert!(client.is_paused());
+}
 
-    // Attempting pause immediately is blocked by the cooldown.
-    let res = client.try_pause(&admin);
+/// unpause retains its cooldown: a second unpause within the window is rejected.
+#[test]
+fn test_unpause_still_cooldown_gated() {
+    let (env, admin, _signer, client) = setup(Some(300));
+    client.pause(&admin);
+    client.unpause(&admin);
+    // Re-pause immediately (no cooldown on pause).
+    client.pause(&admin);
+    // Now try to unpause immediately — still inside the unpause cooldown window.
+    let res = client.try_unpause(&admin);
     assert_eq!(res, Err(Ok(HotError::CooldownActive)));
 
-    // Just before the window closes it is still blocked.
-    advance(&env, 299);
-    let pause = Symbol::new(&env, ACTION_PAUSE);
-    assert_eq!(client.cooldown_remaining(&pause), 1);
-    assert_eq!(client.try_pause(&admin), Err(Ok(HotError::CooldownActive)));
-
-    // At the boundary it becomes available again.
-    advance(&env, 1);
-    assert!(client.is_ready(&pause));
-    client.pause(&admin);
+    // After the window elapses, unpause succeeds.
+    advance(&env, 300);
+    client.unpause(&admin);
+    assert!(!client.is_paused());
 }
 
 #[test]
@@ -180,7 +215,7 @@ fn test_per_action_isolation() {
     let new_signer = Address::generate(&env);
 
     client.pause(&admin);
-    // rotate is a distinct action; not blocked by pause's window.
+    // rotate is a distinct action; not blocked by anything.
     client.rotate_signer(&admin, &new_signer);
     assert_eq!(client.get_signer(), new_signer);
 
@@ -238,15 +273,17 @@ fn test_rotate_signer_event_payload_matches_storage() {
 fn test_shorter_cooldown_takes_effect_for_next_check() {
     let (env, admin, _signer, client) = setup(Some(1000));
     client.pause(&admin);
-    // Unpause so the contract is not paused (arms both cooldowns at t=0).
+    // Unpause to arm the unpause cooldown.
     client.unpause(&admin);
 
-    // Shorten the window; the pending cooldown becomes available sooner.
+    // Shorten the window; the pending unpause cooldown becomes available sooner.
     client.set_cooldown(&admin, &10);
     advance(&env, 10);
-    let pause = Symbol::new(&env, ACTION_PAUSE);
-    assert!(client.is_ready(&pause));
+    let unpause = Symbol::new(&env, crate::ACTION_UNPAUSE);
+    assert!(client.is_ready(&unpause));
+    // Re-pause (no cooldown) then unpause after the shortened window.
     client.pause(&admin);
+    client.unpause(&admin);
 }
 
 #[test]
@@ -394,19 +431,20 @@ fn test_bench_setup_exercises_all_hot_entrypoints() {
     assert_eq!(client.get_cooldown(), 60);
     assert_eq!(client.get_pending_admin(), None);
 
-    let pause = Symbol::new(&env, ACTION_PAUSE);
-    assert_eq!(client.cooldown_remaining(&pause), 0);
-    assert!(client.is_ready(&pause));
+    let unpause = Symbol::new(&env, crate::ACTION_UNPAUSE);
+    assert_eq!(client.cooldown_remaining(&unpause), 0);
+    assert!(client.is_ready(&unpause));
 
-    // Critical action with cooldown
+    // pause has no cooldown — succeeds immediately.
     client.pause(&admin);
     assert!(client.is_paused());
 
+    // unpause is still cooldown-gated; advance past the window first.
     advance(&env, 61);
-    assert!(client.is_ready(&pause));
     client.unpause(&admin);
     assert!(!client.is_paused());
 
+    // rotate is cooldown-gated; advance past the window.
     advance(&env, 61);
     let new_signer = Address::generate(&env);
     client.rotate_signer(&admin, &new_signer);

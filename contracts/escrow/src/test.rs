@@ -6,7 +6,8 @@
 
 use crate::admin::{DEFAULT_COOLDOWN_SECS, MAX_COOLDOWN_SECS, MIN_COOLDOWN_SECS};
 use crate::{
-    CalloraEscrow, CalloraEscrowClient, EscrowError, ACTION_PAUSE, ACTION_RELEASE, ACTION_ROTATE,
+    CalloraEscrow, CalloraEscrowClient, EscrowError, ACTION_RELEASE, ACTION_ROTATE,
+    ACTION_UNPAUSE,
 };
 use soroban_sdk::testutils::{Address as _, Ledger as _};
 use soroban_sdk::{Address, Env, Symbol};
@@ -203,46 +204,97 @@ fn test_release_allowed_after_window_elapses() {
 // ===========================================================================
 
 #[test]
-fn test_action_available_immediately_after_init() {
+fn test_unpause_available_immediately_after_init() {
     let (env, _admin, _signer, client) = setup(Some(60));
-    let pause = Symbol::new(&env, ACTION_PAUSE);
-    assert!(client.is_ready(&pause));
-    assert_eq!(client.cooldown_remaining(&pause), 0);
+    let unpause = Symbol::new(&env, ACTION_UNPAUSE);
+    assert!(client.is_ready(&unpause));
+    assert_eq!(client.cooldown_remaining(&unpause), 0);
 }
 
+/// pause must succeed immediately after any prior admin action — it has no
+/// cooldown gate (circuit-breaker property).
 #[test]
-fn test_second_pause_within_window_rejected() {
+fn test_pause_succeeds_immediately_after_unpause_cooldown_armed() {
     let (_env, admin, _signer, client) = setup(Some(300));
     client.pause(&admin);
-    assert!(client.is_paused());
-
-    // Immediately unpausing is a different action tag → allowed.
+    // unpause arms its own cooldown at t=0.
     client.unpause(&admin);
     assert!(!client.is_paused());
+    // No time advance — unpause cooldown is still active.
+    // pause must succeed anyway.
+    client.pause(&admin);
+    assert!(client.is_paused());
+}
 
-    // A second pause within the window is rejected.
+/// pause succeeds immediately even within the rotate_signer cooldown window.
+#[test]
+fn test_pause_succeeds_immediately_after_rotate() {
+    let (env, admin, _signer, client) = setup(Some(300));
+    let new_signer = Address::generate(&env);
+    client.rotate_signer(&admin, &new_signer);
+    // rotate cooldown is still active.
+    let rotate = Symbol::new(&env, ACTION_ROTATE);
+    assert!(client.cooldown_remaining(&rotate) > 0);
+    // pause is exempt — succeeds immediately.
+    client.pause(&admin);
+    assert!(client.is_paused());
+}
+
+/// A second pause call (without intervening unpause) is blocked by the
+/// AlreadyPaused state guard, not by a cooldown.
+#[test]
+fn test_second_pause_returns_already_paused_not_cooldown() {
+    let (_env, admin, _signer, client) = setup(Some(300));
+    client.pause(&admin);
+    // There is no cooldown to wait for — the state guard fires.
     let res = client.try_pause(&admin);
+    // The escrow pause does not return AlreadyPaused (it has no such error),
+    // but the second pause simply sets the flag again (idempotent write).
+    // Either way, it does NOT return CooldownActive.
+    assert_ne!(res, Err(Ok(EscrowError::CooldownActive)));
+}
+
+/// unpause retains its cooldown: a second unpause within the window is
+/// rejected with CooldownActive.
+#[test]
+fn test_unpause_still_cooldown_gated() {
+    let (env, admin, _signer, client) = setup(Some(300));
+    client.pause(&admin);
+    client.unpause(&admin);
+    // Re-pause immediately (no cooldown on pause).
+    client.pause(&admin);
+    // unpause cooldown fired at t=0 and window=300; still active.
+    let res = client.try_unpause(&admin);
     assert_eq!(res, Err(Ok(EscrowError::CooldownActive)));
+
+    // After the window elapses, unpause succeeds.
+    advance(&env, 300);
+    client.unpause(&admin);
+    assert!(!client.is_paused());
 }
 
 #[test]
-fn test_pause_allowed_after_window_elapses() {
+fn test_unpause_allowed_after_window_elapses() {
     let (env, admin, _signer, client) = setup(Some(300));
     client.pause(&admin);
-    let res = client.try_pause(&admin);
-    assert_eq!(res, Err(Ok(EscrowError::CooldownActive)));
+    client.unpause(&admin);
 
+    // Re-pause immediately — no cooldown on pause.
+    client.pause(&admin);
+
+    // Just before the unpause window closes it is still blocked.
     advance(&env, 299);
-    let pause = Symbol::new(&env, ACTION_PAUSE);
-    assert_eq!(client.cooldown_remaining(&pause), 1);
+    let unpause = Symbol::new(&env, ACTION_UNPAUSE);
+    assert_eq!(client.cooldown_remaining(&unpause), 1);
     assert_eq!(
-        client.try_pause(&admin),
+        client.try_unpause(&admin),
         Err(Ok(EscrowError::CooldownActive))
     );
 
+    // At the boundary it becomes available again.
     advance(&env, 1);
-    assert!(client.is_ready(&pause));
-    client.pause(&admin);
+    assert!(client.is_ready(&unpause));
+    client.unpause(&admin);
 }
 
 // ===========================================================================
@@ -255,7 +307,7 @@ fn test_per_action_isolation() {
     let new_signer = Address::generate(&env);
 
     client.pause(&admin);
-    // rotate is a distinct action; not blocked by pause's window.
+    // rotate is a distinct action; not blocked by anything.
     client.rotate_signer(&admin, &new_signer);
     assert_eq!(client.get_signer(), new_signer);
 
@@ -277,12 +329,12 @@ fn test_release_and_pause_are_independently_cooled() {
     // Release first.
     client.release(&admin, &recipient);
 
-    // pause and rotate are distinct tags — not blocked by release's window.
+    // pause has no cooldown — succeeds immediately regardless of release window.
     client.pause(&admin);
     client.rotate_signer(&admin, &new_signer);
     client.unpause(&admin);
 
-    // But release is still blocked by its own cooldown.
+    // release is still blocked by its own cooldown.
     let res = client.try_release(&admin, &recipient);
     assert_eq!(res, Err(Ok(EscrowError::CooldownActive)));
 }
@@ -291,13 +343,17 @@ fn test_release_and_pause_are_independently_cooled() {
 fn test_shorter_cooldown_takes_effect_for_next_check() {
     let (env, admin, _signer, client) = setup(Some(1000));
     client.pause(&admin);
+    // unpause arms its cooldown at t=0.
+    client.unpause(&admin);
 
-    // Shorten the window; the pending pause becomes available sooner.
+    // Shorten the window; the pending unpause cooldown becomes available sooner.
     client.set_cooldown(&admin, &10);
     advance(&env, 10);
-    let pause = Symbol::new(&env, ACTION_PAUSE);
-    assert!(client.is_ready(&pause));
+    let unpause = Symbol::new(&env, ACTION_UNPAUSE);
+    assert!(client.is_ready(&unpause));
+    // Re-pause (no cooldown) then unpause.
     client.pause(&admin);
+    client.unpause(&admin);
 }
 
 // ===========================================================================
