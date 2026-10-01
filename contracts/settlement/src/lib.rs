@@ -539,9 +539,8 @@ impl CalloraSettlement {
 
     /// Withdraw developer balance as USDC to a designated recipient.
     ///
-    /// Requires the developer to authorize the request, the amount to be
-    /// positive, the developer's optional claim window to be open, and the
-    /// requested amount to be covered by the tracked developer balance in the
+    /// Requires the developer to authorize the request and the claim to pass
+    /// the shared claim validation (see `validate_claim`) for the
     /// configured USDC token.
     ///
     /// # Arguments
@@ -550,11 +549,14 @@ impl CalloraSettlement {
     /// * `to` - Optional recipient address; if `None`, defaults to `developer`.
     ///
     /// # Errors
+    /// - `DeveloperFrozen` if the developer's withdrawals are frozen.
     /// - `AmountNotPositive` if amount is <= 0.
     /// - `ClaimWindowClosed` if a developer claim window exists and the current
     ///   ledger timestamp is outside that inclusive window.
     /// - `UsdcTokenNotConfigured` if USDC token not set.
     /// - `InsufficientDeveloperBalance` if developer balance < amount.
+    /// - `MinBalanceViolation` if the withdrawal would leave the developer
+    ///   below their configured minimum balance.
     /// - `DailyWithdrawCapExceeded` if daily cap is exceeded.
     /// - `DeveloperBalanceUnderflow` if subtraction underflows.
     /// - `InsufficientContractBalance` if contract has insufficient USDC.
@@ -566,6 +568,124 @@ impl CalloraSettlement {
         to: Option<Address>,
     ) -> Result<(), SettlementError> {
         developer.require_auth();
+        let sim = Self::validate_claim(&env, &developer, amount, to)?;
+        Self::bump_claim_storage_ttl(&env, &developer);
+
+        let contract_address = env.current_contract_address();
+        let usdc = token::Client::new(&env, &sim.token);
+
+        // --- EFFECTS (persist all state mutations before the external call) ---
+        // CEI: write the reduced balance and updated daily-withdrawal counter
+        // here so that any re-entrant call via the token contract observes the
+        // already-reduced balance and cannot withdraw a second time.
+        let balance_key = StorageKey::DeveloperBalance(sim.developer.clone(), sim.token.clone());
+        env.storage()
+            .persistent()
+            .set(&balance_key, &sim.remaining_balance);
+        env.storage()
+            .persistent()
+            .extend_ttl(&balance_key, 50000, 50000);
+
+        let today = env.ledger().timestamp() / 86400;
+        let today_key = StorageKey::WithdrawalToday(sim.developer.clone());
+        env.storage().persistent().set(
+            &today_key,
+            &DailyWithdrawState {
+                day: today,
+                amount: sim.withdrawn_today_after,
+            },
+        );
+        env.storage()
+            .persistent()
+            .extend_ttl(&today_key, 50000, 50000);
+
+        // --- INTERACTION (external token transfer happens last) ---
+        usdc.transfer(&contract_address, &sim.recipient, &sim.amount);
+
+        events::emit_developer_withdraw(
+            &env,
+            &sim.developer.clone(),
+            DeveloperWithdrawEvent {
+                developer: sim.developer,
+                amount: sim.amount,
+                remaining_balance: sim.remaining_balance,
+                to: sim.recipient,
+                token: sim.token,
+            },
+        );
+
+        Ok(())
+    }
+
+    /// Extend the TTLs that a real claim historically maintained: the
+    /// instance, the developer's claim-window entry (when configured), and
+    /// the developer's minimum-balance entry (when configured).
+    ///
+    /// Validation itself ([`Self::validate_claim`]) is read-only so that
+    /// `simulate_claim` never mutates storage; only the state-changing
+    /// `withdraw_developer_balance` path performs this maintenance.
+    fn bump_claim_storage_ttl(env: &Env, developer: &Address) {
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_BUMP_THRESHOLD, INSTANCE_BUMP_AMOUNT);
+        let window_key = StorageKey::DeveloperClaimWindow(developer.clone());
+        if env.storage().persistent().has(&window_key) {
+            env.storage().persistent().extend_ttl(
+                &window_key,
+                PERSISTENT_BUMP_THRESHOLD,
+                PERSISTENT_BUMP_AMOUNT,
+            );
+        }
+        let min_key = StorageKey::DeveloperMinBalance(developer.clone());
+        if env.storage().persistent().has(&min_key) {
+            env.storage().persistent().extend_ttl(
+                &min_key,
+                PERSISTENT_BUMP_THRESHOLD,
+                PERSISTENT_BUMP_AMOUNT,
+            );
+        }
+    }
+
+    /// Simulate a developer claim without side effects.
+    ///
+    /// This read-only view previews the outcome of `withdraw_developer_balance`
+    /// for the configured USDC token by running the exact shared claim
+    /// validation. It intentionally does not require developer authorization
+    /// and does not transfer tokens, mutate balances, update daily withdrawal
+    /// counters, extend TTLs, or emit events.
+    ///
+    /// The view returns the same typed errors as a real claim for developer
+    /// freeze state, positive amount, claim window, developer balance,
+    /// per-developer minimum balance, daily cap, USDC configuration, and
+    /// contract token-liquidity failures. If `to` is `None`, the simulated
+    /// recipient is the developer address.
+    pub fn simulate_claim(
+        env: Env,
+        developer: Address,
+        amount: i128,
+        to: Option<Address>,
+    ) -> Result<ClaimSimulation, SettlementError> {
+        Self::validate_claim(&env, &developer, amount, to)
+    }
+
+    /// Shared claim validation used by both `withdraw_developer_balance` and
+    /// `simulate_claim` so the simulation mirrors a real claim exactly.
+    ///
+    /// Checks, in order: developer freeze, positive amount, recipient
+    /// (panics on the contract's own address), open claim window,
+    /// configured USDC token, developer balance vs. amount,
+    /// per-developer minimum balance, daily withdrawal cap, and contract
+    /// token liquidity.
+    ///
+    /// This function is read-only: it never extends TTLs or writes storage.
+    /// The state-changing caller (`withdraw_developer_balance`) performs TTL
+    /// maintenance itself via `bump_claim_storage_ttl`.
+    fn validate_claim(
+        env: &Env,
+        developer: &Address,
+        amount: i128,
+        to: Option<Address>,
+    ) -> Result<ClaimSimulation, SettlementError> {
         if freeze::is_developer_frozen(env.clone(), developer.clone()) {
             return Err(SettlementError::DeveloperFrozen);
         }
@@ -579,125 +699,7 @@ impl CalloraSettlement {
             env.panic_with_error(SettlementError::InvalidRecipient);
         }
 
-        Self::require_claim_window_open(&env, &developer)?;
-
-        let usdc_address = Self::get_usdc_token(env.clone())?;
-
-        // --- CHECKS ---
-        // Single read of the developer's per-token balance (removes the duplicate
-        // read that previously appeared as both `dev_balance_key`/`dev_balance`
-        // and `balance_key`/`current_balance` with identical keys).
-        let balance_key = StorageKey::DeveloperBalance(developer.clone(), usdc_address.clone());
-        let current_balance: i128 = env.storage().persistent().get(&balance_key).unwrap_or(0);
-        if amount > current_balance {
-            return Err(SettlementError::InsufficientDeveloperBalance);
-        }
-
-        // Compute the post-withdrawal balance and enforce the developer minimum.
-        let new_balance = current_balance
-            .checked_sub(amount)
-            .ok_or(SettlementError::DeveloperBalanceUnderflow)?;
-        limits::check_min_balance(&env, &developer, new_balance)?;
-
-        let today = env.ledger().timestamp() / 86400;
-        let today_key = StorageKey::WithdrawalToday(developer.clone());
-        let mut daily = env
-            .storage()
-            .persistent()
-            .get::<_, DailyWithdrawState>(&today_key)
-            .unwrap_or(DailyWithdrawState {
-                day: today,
-                amount: 0,
-            });
-        if daily.day != today {
-            daily.day = today;
-            daily.amount = 0;
-        }
-
-        let cap: i128 = env
-            .storage()
-            .persistent()
-            .get(&StorageKey::DailyWithdrawCap(developer.clone()))
-            .unwrap_or(0);
-        if cap > 0 {
-            let projected = daily
-                .amount
-                .checked_add(amount)
-                .ok_or(SettlementError::DailyWithdrawCapExceeded)?;
-            if projected > cap {
-                return Err(SettlementError::DailyWithdrawCapExceeded);
-            }
-        }
-
-        let usdc = token::Client::new(&env, &usdc_address);
-        if usdc.balance(&contract_address) < amount {
-            return Err(SettlementError::InsufficientContractBalance);
-        }
-
-        // --- EFFECTS (persist all state mutations before the external call) ---
-        // CEI: write the reduced balance and updated daily-withdrawal counter
-        // here so that any re-entrant call via the token contract observes the
-        // already-reduced balance and cannot withdraw a second time.
-        env.storage().persistent().set(&balance_key, &new_balance);
-        env.storage()
-            .persistent()
-            .extend_ttl(&balance_key, 50000, 50000);
-
-        daily.amount = daily
-            .amount
-            .checked_add(amount)
-            .ok_or(SettlementError::DailyWithdrawCapExceeded)?;
-        env.storage().persistent().set(&today_key, &daily);
-        env.storage()
-            .persistent()
-            .extend_ttl(&today_key, 50000, 50000);
-
-        // --- INTERACTION (external token transfer happens last) ---
-        usdc.transfer(&contract_address, &recipient, &amount);
-
-        events::emit_developer_withdraw(
-            &env,
-            &developer.clone(),
-            DeveloperWithdrawEvent {
-                developer,
-                amount,
-                remaining_balance: new_balance,
-                to: recipient,
-                token: usdc_address,
-            },
-        );
-
-        Ok(())
-    }
-
-    /// Simulate a developer claim without side effects.
-    ///
-    /// This read-only view previews the outcome of `withdraw_developer_balance`
-    /// for the configured USDC token. It intentionally does not require
-    /// developer authorization and does not transfer tokens, mutate balances,
-    /// update daily withdrawal counters, extend TTLs, or emit events.
-    ///
-    /// The view returns the same typed errors as a real claim for amount, claim
-    /// window, developer balance, daily cap, USDC configuration, and contract
-    /// token-liquidity failures. If `to` is `None`, the simulated recipient is
-    /// the developer address.
-    pub fn simulate_claim(
-        env: Env,
-        developer: Address,
-        amount: i128,
-        to: Option<Address>,
-    ) -> Result<ClaimSimulation, SettlementError> {
-        if amount <= 0 {
-            return Err(SettlementError::AmountNotPositive);
-        }
-
-        let recipient = to.unwrap_or_else(|| developer.clone());
-        let contract_address = env.current_contract_address();
-        if recipient == contract_address {
-            env.panic_with_error(SettlementError::InvalidRecipient);
-        }
-
-        Self::require_claim_window_open(&env, &developer)?;
+        Self::require_claim_window_open(env, developer)?;
 
         let usdc_address = Self::get_usdc_token(env.clone())?;
         let current_balance: i128 = env
@@ -708,16 +710,15 @@ impl CalloraSettlement {
                 usdc_address.clone(),
             ))
             .unwrap_or(0);
+        let remaining = current_balance
+            .checked_sub(amount)
+            .ok_or(SettlementError::InsufficientDeveloperBalance)?;
+        limits::check_min_balance(env, developer, remaining)?;
         if amount > current_balance {
             return Err(SettlementError::InsufficientDeveloperBalance);
         }
 
         let today = env.ledger().timestamp() / 86400;
-        let cap: i128 = env
-            .storage()
-            .persistent()
-            .get(&StorageKey::DailyWithdrawCap(developer.clone()))
-            .unwrap_or(0);
         let daily = env
             .storage()
             .persistent()
@@ -727,6 +728,11 @@ impl CalloraSettlement {
                 amount: 0,
             });
         let withdrawn_today = if daily.day == today { daily.amount } else { 0 };
+        let cap: i128 = env
+            .storage()
+            .persistent()
+            .get(&StorageKey::DailyWithdrawCap(developer.clone()))
+            .unwrap_or(0);
         let withdrawn_today_after = withdrawn_today
             .checked_add(amount)
             .ok_or(SettlementError::DailyWithdrawCapExceeded)?;
@@ -737,13 +743,13 @@ impl CalloraSettlement {
         let remaining_balance = current_balance
             .checked_sub(amount)
             .ok_or(SettlementError::DeveloperBalanceUnderflow)?;
-        let contract_balance = token::Client::new(&env, &usdc_address).balance(&contract_address);
+        let contract_balance = token::Client::new(env, &usdc_address).balance(&contract_address);
         if contract_balance < amount {
             return Err(SettlementError::InsufficientContractBalance);
         }
 
         Ok(ClaimSimulation {
-            developer,
+            developer: developer.clone(),
             amount,
             recipient,
             token: usdc_address,
@@ -870,15 +876,12 @@ impl CalloraSettlement {
     /// window and the current ledger timestamp falls outside its inclusive
     /// `[start_ts, end_ts]` range. A developer with no configured window may
     /// claim at any time.
+    ///
+    /// This check is read-only: it never extends TTLs, so callers that need
+    /// TTL maintenance (e.g. `withdraw_developer_balance`) must extend the
+    /// [`StorageKey::DeveloperClaimWindow`] entry explicitly.
     fn require_claim_window_open(env: &Env, developer: &Address) -> Result<(), SettlementError> {
         let key = StorageKey::DeveloperClaimWindow(developer.clone());
-        if env.storage().persistent().has(&key) {
-            env.storage().persistent().extend_ttl(
-                &key,
-                PERSISTENT_BUMP_THRESHOLD,
-                PERSISTENT_BUMP_AMOUNT,
-            );
-        }
         let window: Option<DeveloperClaimWindow> = env.storage().persistent().get(&key);
         if let Some(window) = window {
             let now = env.ledger().timestamp();
@@ -1676,6 +1679,8 @@ mod test_invariant;
 mod test_multi_asset;
 #[cfg(test)]
 mod test_overflow_safe_math;
+#[cfg(test)]
+mod test_simulate_claim;
 #[cfg(test)]
 mod test_ttl_bump;
 #[cfg(test)]
