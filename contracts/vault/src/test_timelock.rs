@@ -11,10 +11,8 @@ extern crate std;
 use soroban_sdk::testutils::{Address as _, Ledger as _};
 use soroban_sdk::{token, Address, BytesN, Env, IntoVal, Symbol};
 
-use super::{
-    timelock, CalloraVault, CalloraVaultClient, VaultError,
-    DEFAULT_TIMELOCK_SECONDS, MAX_TIMELOCK_SECONDS, MIN_TIMELOCK_SECONDS,
-};
+use super::{timelock, CalloraVault, CalloraVaultClient, VaultError};
+use super::timelock::{DEFAULT_TIMELOCK_SECONDS, MAX_TIMELOCK_SECONDS, MIN_TIMELOCK_SECONDS};
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -36,7 +34,17 @@ fn setup(env: &Env) -> (Address, CalloraVaultClient<'_>, Address, Address, Addre
     let recipient = Address::generate(env);
     env.mock_all_auths();
     // Owner is initial admin by default (lib.rs::init sets Admin = owner).
-    client.init(&owner, &usdc, &None, &None, &None, &None, &None);
+    // min_deposit must be > 0; pass 1 as the minimum valid value.
+    client.init(
+        &owner,
+        &usdc,
+        &None,        // initial_balance
+        &None,        // authorized_caller
+        &Some(1i128), // min_deposit (must be > 0)
+        &None,        // revenue_pool
+        &None,        // max_deduct
+        &None,        // settlement
+    );
     // Rotate admin to a distinct address so admin != owner for auth tests.
     client.set_admin(&owner, &admin);
     client.accept_admin();
@@ -72,6 +80,82 @@ fn set_window_updates_storage_and_emits_event() {
     let topic0: Symbol = last.1.get(0).unwrap().into_val(&env);
     assert_eq!(topic0, Symbol::new(&env, "tl_window_changed"));
     assert_eq!(last.0, vault_addr);
+}
+
+/// #1112 — default-to-custom: event payload must be (DEFAULT, new_window),
+/// not (new_window, new_window).
+#[test]
+fn set_window_event_payload_default_to_custom() {
+    let env = Env::default();
+    let (vault_addr, client, admin, _, _) = setup(&env);
+
+    let new_window = MIN_TIMELOCK_SECONDS + 7_200; // 1 h + 2 h = 3 h
+    client.set_timelock_window(&admin, &new_window);
+
+    let events = env.events().all();
+    let last = events.last().expect("expected tl_window_changed event");
+    assert_eq!(last.0, vault_addr, "event contract must be vault");
+
+    // topic[0] == "tl_window_changed"
+    let topic0: Symbol = last.1.get(0).unwrap().into_val(&env);
+    assert_eq!(topic0, Symbol::new(&env, "tl_window_changed"));
+
+    // data == (old_window, new_window)
+    let payload: (u64, u64) = last.2.into_val(&env);
+    assert_eq!(
+        payload.0,
+        DEFAULT_TIMELOCK_SECONDS,
+        "first element must be the DEFAULT (old) window, not the new value"
+    );
+    assert_eq!(
+        payload.1, new_window,
+        "second element must be the requested new window"
+    );
+    // Sanity: the two elements must differ so the test is meaningful.
+    assert_ne!(
+        payload.0, payload.1,
+        "old and new must differ; equal values indicate the bug is still present"
+    );
+}
+
+/// #1112 — custom-to-custom: event payload carries the previously-set window,
+/// not the newly-set one, as the first element.
+#[test]
+fn set_window_event_payload_custom_to_custom() {
+    let env = Env::default();
+    let (vault_addr, client, admin, _, _) = setup(&env);
+
+    // First change: default (172_800) → first_window.
+    let first_window = MIN_TIMELOCK_SECONDS + 3_600; // 2 h
+    client.set_timelock_window(&admin, &first_window);
+    assert_eq!(client.get_timelock_window(), first_window);
+
+    // Second change: first_window → second_window.
+    let second_window = MAX_TIMELOCK_SECONDS - 3_600; // 30 d − 1 h
+    client.set_timelock_window(&admin, &second_window);
+    assert_eq!(client.get_timelock_window(), second_window);
+
+    let events = env.events().all();
+    let last = events.last().expect("expected second tl_window_changed event");
+    assert_eq!(last.0, vault_addr);
+
+    let topic0: Symbol = last.1.get(0).unwrap().into_val(&env);
+    assert_eq!(topic0, Symbol::new(&env, "tl_window_changed"));
+
+    // data == (first_window, second_window) — NOT (second_window, second_window).
+    let payload: (u64, u64) = last.2.into_val(&env);
+    assert_eq!(
+        payload.0, first_window,
+        "first element must be the previously-set window"
+    );
+    assert_eq!(
+        payload.1, second_window,
+        "second element must be the newly-set window"
+    );
+    assert_ne!(
+        payload.0, payload.1,
+        "old and new must differ; equal values indicate the bug is still present"
+    );
 }
 
 #[test]

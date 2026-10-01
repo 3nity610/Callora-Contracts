@@ -458,6 +458,41 @@ Emitted when the owner updates the authorized caller address.
 
 ---
 
+### `tl_window_changed`
+
+Emitted when the admin updates the timelock window length via `set_timelock_window()`.
+
+The payload records both the **previous** and the **new** window length so auditors
+can detect shortening of the escape-hatch delay without replaying storage history.
+
+| Index   | Location | Type       | Description                                         |
+|---------|----------|------------|-----------------------------------------------------|
+| topic 0 | topics   | Symbol     | `"tl_window_changed"`                               |
+| topic 1 | topics   | Symbol     | `"callora.v1"` (version marker)                     |
+| topic 2 | topics   | Address    | `caller` — admin who changed the window             |
+| data    | data     | (u64, u64) | `(old_window_seconds, new_window_seconds)`          |
+
+**Payload order:** `data[0]` is always the **old** (previous) value; `data[1]` is the
+**new** (just-committed) value. Auditors monitoring for shortening attacks should
+assert `data[1] >= data[0]`.
+
+Valid window range: [`MIN_TIMELOCK_SECONDS` (3 600 s / 1 h), `MAX_TIMELOCK_SECONDS` (2 592 000 s / 30 d)].
+Default at deployment: `DEFAULT_TIMELOCK_SECONDS` = 172 800 s (48 h).
+
+```json
+{
+  "topics": ["tl_window_changed", "callora.v1", "GADMIN..."],
+  "data": [172800, 3600]
+}
+```
+
+> **Security note:** a `tl_window_changed` event where `data[1] < data[0]` means
+> the admin shortened the escape-hatch delay. Indexers and monitoring systems
+> SHOULD alert on this condition because a shortened window reduces the time
+> available for community reaction to a malicious admin action.
+
+---
+
 ---
 
 ### `admin_nominated`
@@ -1526,6 +1561,7 @@ operational edge cases (off-chain payment reconciliation, dispute resolution).
 | `clear_revenue_pool`     | vault           | `set_revenue_pool(None)`                 |
 | `set_max_deduct`         | vault           | `set_max_deduct()`                       |
 | `set_authorized_caller` | vault           | `set_authorized_caller()`                |
+| `tl_window_changed`     | vault           | `set_timelock_window()`                  |
 | `metadata_set`           | vault           | `set_metadata()`                         |
 | `metadata_updated`       | vault           | `update_metadata()`                      |
 | `metadata_removed`       | vault           | `remove_metadata()`                      |
@@ -1569,6 +1605,7 @@ operational edge cases (off-chain payment reconciliation, dispute resolution).
 | 0.1.0   | settlement    | `payment_received`, `balance_credited`                       |
 | 0.1.0   | settlement    | `developer_force_credited` (admin escape hatch)               |
 | 0.2.0   | vault         | Added `swept` event on `sweep_idle_balance()` (Issue #415)  |
+| 0.2.0   | vault         | Fixed `tl_window_changed` payload: first element is now the **previous** window, second is the new window (Issue #1112). Prior versions emitted `(new, new)`. |
 | 0.2.0   | revenue-pool  | Added `emergency_drain_proposed`, `emergency_drain_executed`, `emergency_drain_cancelled` events |
 | 0.2.0   | settlement    | Added `developer_min_balance_changed` event on `set_developer_min_balance()` (Issue #633) |
 | 0.3.0   | vault         | Added `"callora_v1"` version marker at topic[1] for `withdraw`, `withdraw_to`, `distribute`, `rescue_funds`, `reserve_cap_set`, `request_id_pruned` (Issue #1118) |
