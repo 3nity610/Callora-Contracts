@@ -306,7 +306,36 @@ pub fn event_metadata_removed(env: &Env) -> Symbol {
     Symbol::new(env, "metadata_removed")
 }
 
+/// Returns the Symbol for the `"price_set"` event topic.
+pub fn event_price_set(env: &Env) -> Symbol {
+    Symbol::new(env, "price_set")
+}
+
+/// Returns the Symbol for the `"price_removed"` event topic.
+pub fn event_price_removed(env: &Env) -> Symbol {
+    Symbol::new(env, "price_removed")
+}
+
 // ─── Emit helpers ────────────────────────────────────────────────────────────
+
+/// Emit `"price_set"` when an offering price is created or changed.
+pub fn emit_price_set(
+    env: &Env,
+    offering_id: &soroban_sdk::String,
+    old: Option<soroban_sdk::String>,
+    new: &soroban_sdk::String,
+) {
+    env.events().publish(
+        (event_price_set(env), offering_id.clone()),
+        (old, new.clone()),
+    );
+}
+
+/// Emit `"price_removed"` when an existing offering price is removed.
+pub fn emit_price_removed(env: &Env, offering_id: &soroban_sdk::String, old: &soroban_sdk::String) {
+    env.events()
+        .publish((event_price_removed(env), offering_id.clone()), old.clone());
+}
 
 /// Emit `"initialized"` once when the settlement contract is first set up.
 ///

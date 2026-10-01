@@ -163,6 +163,12 @@ const SETTLEMENT_TOPICS: &[(&str, fn(&Env) -> Symbol)] = &[
         callora_settlement::events::event_admin_migration(e)
     }),
     ("deposit", |e| callora_settlement::events::event_deposit(e)),
+    ("price_set", |e| {
+        callora_settlement::events::event_price_set(e)
+    }),
+    ("price_removed", |e| {
+        callora_settlement::events::event_price_removed(e)
+    }),
 ];
 
 // ---------------------------------------------------------------------------
@@ -366,7 +372,7 @@ fn topic_counts_match_catalog_documentation() {
             + SETTLEMENT_TOPICS.len()
             + REVENUE_POOL_TOPICS.len()
             + DISTRIBUTE_TOPICS.len(),
-        85,
+        87,
         "total topic count changed — update docs/EVENT_TOPICS.md"
     );
 }

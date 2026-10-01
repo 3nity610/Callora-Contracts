@@ -77,6 +77,18 @@ mod event_tests {
         event.1.get(1).unwrap().into_val(env)
     }
 
+    /// Extract the second topic of an event as a `String`.
+    fn topic1_string(
+        env: &Env,
+        event: &(
+            Address,
+            soroban_sdk::Vec<soroban_sdk::Val>,
+            soroban_sdk::Val,
+        ),
+    ) -> soroban_sdk::String {
+        event.1.get(1).unwrap().into_val(env)
+    }
+
     /// Extract the third topic of an event as an `Address`.
     fn topic2_addr(
         env: &Env,
@@ -113,6 +125,76 @@ mod event_tests {
                 }
             })
             .collect()
+    }
+
+
+    // ─── Price registry ─────────────────────────────────────────────────────
+
+    #[test]
+    fn test_set_price_emits_old_and_new_values() {
+        let (env, contract, admin, _, _) = setup();
+        let client = CalloraSettlementClient::new(&env, &contract);
+        let offering_id = soroban_sdk::String::from_str(&env, "offering-1");
+        let first = soroban_sdk::String::from_str(&env, "100");
+        let second = soroban_sdk::String::from_str(&env, "200");
+
+        client.set_price(&admin, &offering_id, &first);
+        let events = env.events().all();
+        let price_events = filter_by_topic(&env, &events, "price_set");
+        assert_eq!(price_events.len(), 1);
+
+        let (old, new): (Option<soroban_sdk::String>, soroban_sdk::String) =
+            price_events[0].2.into_val(&env);
+        assert_eq!(topic1_string(&env, &price_events[0]), offering_id);
+        assert!(old.is_none());
+        assert_eq!(new, first);
+
+        env.ledger().set_sequence_number(
+            env.ledger().sequence() + crate::price_registry::MIN_WRITE_INTERVAL,
+        );
+        env.events().all();
+        client.set_price(&admin, &offering_id, &second);
+        let events = env.events().all();
+        let price_events = filter_by_topic(&env, &events, "price_set");
+        assert_eq!(price_events.len(), 1);
+
+        let (old, new): (Option<soroban_sdk::String>, soroban_sdk::String) =
+            price_events[0].2.into_val(&env);
+        assert_eq!(old, Some(first));
+        assert_eq!(new, second);
+    }
+
+    #[test]
+    fn test_remove_price_emits_removed_value() {
+        let (env, contract, admin, _, _) = setup();
+        let client = CalloraSettlementClient::new(&env, &contract);
+        let offering_id = soroban_sdk::String::from_str(&env, "offering-1");
+        let price = soroban_sdk::String::from_str(&env, "100");
+
+        client.set_price(&admin, &offering_id, &price);
+        env.ledger().set_timestamp(1_700_000_001);
+        client.remove_price(&admin, &offering_id);
+
+        let events = env.events().all();
+        let price_events = filter_by_topic(&env, &events, "price_removed");
+        assert_eq!(price_events.len(), 1);
+        assert_eq!(topic1_string(&env, &price_events[0]), offering_id);
+
+        let old: soroban_sdk::String = price_events[0].2.into_val(&env);
+        assert_eq!(old, price);
+    }
+
+    #[test]
+    fn test_remove_missing_price_emits_no_event() {
+        let (env, contract, admin, _, _) = setup();
+        let client = CalloraSettlementClient::new(&env, &contract);
+        let offering_id = soroban_sdk::String::from_str(&env, "missing");
+
+        client.remove_price(&admin, &offering_id);
+
+        let events = env.events().all();
+        let price_events = filter_by_topic(&env, &events, "price_removed");
+        assert!(price_events.is_empty());
     }
 
     // ─── Init ─────────────────────────────────────────────────────────────────

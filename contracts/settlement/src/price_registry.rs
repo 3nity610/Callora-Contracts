@@ -24,6 +24,7 @@
 
 use soroban_sdk::{Address, Env, String};
 
+use crate::events::{emit_price_removed, emit_price_set};
 use crate::{CalloraSettlement, SettlementError, StorageKey};
 
 /// Minimum number of ledgers that must pass between consecutive price writes
@@ -60,8 +61,10 @@ pub fn set_price(env: &Env, caller: Address, offering_id: String, price: String)
         env.panic_with_error(SettlementError::Unauthorized);
     }
     enforce_write_rate_limit(env, &caller);
-    let key = StorageKey::Price(offering_id);
+    let key = StorageKey::Price(offering_id.clone());
+    let old = env.storage().persistent().get::<_, String>(&key);
     env.storage().persistent().set(&key, &price);
+    emit_price_set(env, &offering_id, old, &price);
     update_last_write_ledger(env, &caller);
 }
 
@@ -91,8 +94,11 @@ pub fn remove_price(env: &Env, caller: Address, offering_id: String) {
         env.panic_with_error(SettlementError::Unauthorized);
     }
     enforce_write_rate_limit(env, &caller);
-    let key = StorageKey::Price(offering_id);
-    env.storage().persistent().remove(&key);
+    let key = StorageKey::Price(offering_id.clone());
+    if let Some(old) = env.storage().persistent().get::<_, String>(&key) {
+        env.storage().persistent().remove(&key);
+        emit_price_removed(env, &offering_id, &old);
+    }
     update_last_write_ledger(env, &caller);
 }
 
@@ -152,8 +158,8 @@ mod tests {
 
     use super::*;
     use crate::{CalloraSettlement, CalloraSettlementClient, SettlementError};
-    use soroban_sdk::testutils::{Address as _, Ledger as _};
     use soroban_sdk::Env;
+    use soroban_sdk::testutils::{Address as _, Ledger as _};
 
     fn setup() -> (Env, Address, Address) {
         let env = Env::default();

@@ -135,8 +135,10 @@ Source: [`contracts/settlement/src/events.rs`](../contracts/settlement/src/event
 | 16 | `admin_migration_proposed`   | `event_admin_migration_proposed`   | Developer balance migration proposed           |
 | 17 | `admin_migration`            | `event_admin_migration`            | Developer balance migration executed           |
 | 18 | `developer_min_balance_changed` | `event_developer_min_balance_changed` | Developer minimum balance threshold set  |
+| 19 | `price_set`                  | `event_price_set`                  | Offering price created or changed          |
+| 20 | `price_removed`              | `event_price_removed`              | Offering price removed                     |
 
-**Total: 18 topics**
+**Total: 20 topics**
 
 ---
 
