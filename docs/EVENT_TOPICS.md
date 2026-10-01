@@ -185,23 +185,26 @@ Source: [`contracts/revenue_pool/src/events.rs`](../contracts/revenue_pool/src/e
 
 Source: [`contracts/distribute/src/events.rs`](../contracts/distribute/src/events.rs)
 
-| #  | Topic String                | Constructor                      | Trigger                                     |
-|----|-----------------------------|----------------------------------|---------------------------------------------|
-| 1  | `init`                      | `event_init`                     | Contract initialization                     |
-| 2  | `admin_changed`             | `event_admin_changed`            | Pending admin accepts; records old and new  |
-| 3  | `admin_transfer_started`    | `event_admin_transfer_started`   | Admin nominates a successor (`set_admin`)   |
-| 4  | `admin_transfer_completed`  | `event_admin_transfer_completed` | Pending admin accepts the role              |
-| 5  | `admin_cancelled`           | `event_admin_cancelled`          | Admin cancels pending transfer              |
-| 6  | `pause_set`                 | `event_pause_set`                | Pause state toggled                         |
-| 7  | `set_max_distribute`        | `event_set_max_distribute`       | Per-leg distribution cap updated            |
-| 8  | `distribute`                | `event_distribute`               | USDC distributed to a single recipient      |
-| 9  | `distribute_started`        | `event_distribute_started`       | Validated distribution transfer is starting |
-| 10 | `distribute_completed`      | `event_distribute_completed`     | Distribution transfer completed             |
-| 11 | `upgraded`                  | `event_upgraded`                 | Contract upgraded to new WASM               |
-| 12 | `batch_distribute_started`  | `event_batch_distribute_started` | Batch distribution validated and starting   |
-| 13 | `batch_distribute_completed`| `event_batch_distribute_completed` | Batch distribution transfer completed     |
+| #  | Topic String                    | Constructor                           | Trigger                                      |
+|----|---------------------------------|---------------------------------------|----------------------------------------------|
+| 1  | `init`                          | `event_init`                          | Distribute initialization                    |
+| 2  | `admin_changed`                 | `event_admin_changed`                 | Pending admin accepts; records old and new   |
+| 3  | `admin_transfer_started`        | `event_admin_transfer_started`        | Admin nominates successor                    |
+| 4  | `admin_transfer_completed`      | `event_admin_transfer_completed`      | Pending admin accepts role                   |
+| 5  | `admin_cancelled`               | `event_admin_cancelled`               | Admin cancels pending transfer               |
+| 6  | `pause_set`                     | `event_pause_set`                     | Contract pause state toggled                 |
+| 7  | `set_max_distribute`            | `event_set_max_distribute`            | Per-leg distribution cap updated             |
+| 8  | `distribute`                    | `event_distribute`                    | USDC distributed to a recipient (single/leg) |
+| 9  | `distribute_started`            | `event_distribute_started`            | Distribution transfer is starting            |
+| 10 | `distribute_completed`          | `event_distribute_completed`          | Distribution transfer completed              |
+| 11 | `upgraded`                      | `event_upgraded`                      | Contract upgraded to new WASM                |
+| 12 | `batch_distribute_started`      | `event_batch_distribute_started`      | Batch distribution starting with total/count |
+| 13 | `batch_distribute_completed`    | `event_batch_distribute_completed`    | Batch distribution completed with total/count|
+| 14 | `batch_distribute`              | `event_batch_distribute`              | Batch distribute alias topic                 |
+| 15 | `batch_leg`                     | `event_batch_leg`                     | Batch payout leg alias topic                 |
+| 16 | `callora_v1`                    | `event_version_v1`                    | Version marker topic at topic[1]             |
 
-**Total: 13 topics**
+**Total: 16 topics**
 
 ---
 
@@ -250,9 +253,13 @@ Distribute:   GCONTRACT_DISTRIBUTE...
 `pause_set`, `set_max_distribute`, `distribute_started`,
 `distribute_completed`
 
+**Distribute-specific** (not shared with other contracts):
+`batch_distribute_started`, `batch_distribute_completed`, `batch_leg`
+
 **Shared across contracts** (disambiguate by contract address):
 `init`, `upgraded`, `admin_nominated`, `admin_accepted`, `admin_cancelled`,
-`admin_broadcast`, `distribute`
+`admin_broadcast`, `distribute`, `distribute_started`, `distribute_completed`,
+`batch_distribute`, `pause_set`, `set_max_distribute`, `callora_v1`
 
 ---
 
@@ -263,8 +270,8 @@ Distribute:   GCONTRACT_DISTRIBUTE...
 | vault         | 47     | 39                  | 8      |
 | settlement    | 19     | 13                  | 6      |
 | revenue_pool  | 24     | 12                  | 12     |
-| distribute    | 13     | 2                   | 11     |
-| **Total**     | **103**| **66**              | **37** |
+| distribute    | 16     | 3                   | 13     |
+| **Total**     | **106**| **67**              | **39** |
 
 > Shared count: each unique topic string that appears in more than one
 > contract is counted once per contract it appears in. The shared topic

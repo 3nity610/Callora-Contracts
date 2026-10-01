@@ -104,8 +104,14 @@ impl Distribute {
         inst.set(&Symbol::new(&env, USDC_KEY), &usdc_token);
         inst.set(&Symbol::new(&env, PAUSED_KEY), &false);
         inst.extend_ttl(LIFETIME_THRESHOLD, BUMP_AMOUNT);
-        env.events()
-            .publish((events::event_init(&env), events::event_version_v1(&env), admin), usdc_token);
+        env.events().publish(
+            (
+                events::event_init(&env),
+                events::event_version_v1(&env),
+                admin,
+            ),
+            usdc_token,
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -280,8 +286,15 @@ impl Distribute {
             .unwrap_or_else(|| env.panic_with_error(DistributeError::NoAdminTransferPending));
         inst.remove(&Symbol::new(&env, PENDING_ADMIN_KEY));
         inst.extend_ttl(LIFETIME_THRESHOLD, BUMP_AMOUNT);
-        env.events()
-            .publish((events::event_admin_cancelled(&env), events::event_version_v1(&env), current, pending), ());
+        env.events().publish(
+            (
+                events::event_admin_cancelled(&env),
+                events::event_version_v1(&env),
+                current,
+                pending,
+            ),
+            (),
+        );
     }
 
     /// Return the pending admin address, or `None` if no transfer is in progress.
@@ -310,15 +323,23 @@ impl Distribute {
     pub fn pause(env: Env, caller: Address) {
         caller.require_auth();
         Self::require_admin(&env, &caller);
-        if Self::is_paused(&env) { env.panic_with_error(DistributeError::AlreadyPaused); }
+        if Self::is_paused(&env) {
+            env.panic_with_error(DistributeError::AlreadyPaused);
+        }
         env.storage()
             .instance()
             .set(&Symbol::new(&env, PAUSED_KEY), &true);
         env.storage()
             .instance()
             .extend_ttl(LIFETIME_THRESHOLD, BUMP_AMOUNT);
-        env.events()
-            .publish((events::event_pause_set(&env), events::event_version_v1(&env), caller), true);
+        env.events().publish(
+            (
+                events::event_pause_set(&env),
+                events::event_version_v1(&env),
+                caller,
+            ),
+            true,
+        );
     }
 
     /// Deactivate the circuit-breaker. Only the admin may call.
@@ -332,15 +353,23 @@ impl Distribute {
     pub fn unpause(env: Env, caller: Address) {
         caller.require_auth();
         Self::require_admin(&env, &caller);
-        if !Self::is_paused(&env) { env.panic_with_error(DistributeError::NotPaused); }
+        if !Self::is_paused(&env) {
+            env.panic_with_error(DistributeError::NotPaused);
+        }
         env.storage()
             .instance()
             .set(&Symbol::new(&env, PAUSED_KEY), &false);
         env.storage()
             .instance()
             .extend_ttl(LIFETIME_THRESHOLD, BUMP_AMOUNT);
-        env.events()
-            .publish((events::event_pause_set(&env), events::event_version_v1(&env), caller), false);
+        env.events().publish(
+            (
+                events::event_pause_set(&env),
+                events::event_version_v1(&env),
+                caller,
+            ),
+            false,
+        );
     }
 
     /// Return `true` if the contract is currently paused.
@@ -382,7 +411,9 @@ impl Distribute {
     pub fn set_max_distribute(env: Env, caller: Address, max_distribute: i128) {
         caller.require_auth();
         Self::require_admin(&env, &caller);
-        if max_distribute <= 0 { env.panic_with_error(DistributeError::CapNotPositive); }
+        if max_distribute <= 0 {
+            env.panic_with_error(DistributeError::CapNotPositive);
+        }
         let old_max = Self::get_max_distribute(env.clone());
         env.storage()
             .instance()
@@ -452,9 +483,20 @@ impl Distribute {
             amount,
         );
         usdc.transfer(&contract_address, &to, &amount);
-        env.events().publish((events::event_distribute(&env), events::event_version_v1(&env), to.clone()), amount);
         env.events().publish(
-            (events::event_distribute_completed(&env), events::event_version_v1(&env), to),
+            (
+                events::event_distribute(&env),
+                events::event_version_v1(&env),
+                to.clone(),
+            ),
+            amount,
+        );
+        env.events().publish(
+            (
+                events::event_distribute_completed(&env),
+                events::event_version_v1(&env),
+                to,
+            ),
             amount,
         );
     }
@@ -490,13 +532,15 @@ impl Distribute {
     /// * `DistributeError::InsufficientBalance` â€” contract holds less than `total`.
     ///
     /// # Events
-    /// Emits `batch_distribute_started` with `caller` as topic and `(total, count)` as data.
-    /// Emits `batch_distribute_completed` with `caller` as topic and `(total, count)` as data.
-    pub fn batch_distribute(
-        env: Env,
-        caller: Address,
-        payments: Vec<(Address, i128)>,
-    ) {
+    /// - Emits `batch_distribute_started` with `caller` as topic and `(total, count)` as data.
+    /// - For each payment leg, emits in payment order:
+    ///   - `distribute_started` with `(distribute_started, callora_v1, recipient)` topic and
+    ///     `DistributionLifecycleEvent` payload before the transfer.
+    ///   - `distribute` with `(distribute, callora_v1, recipient)` topic and `amount` data.
+    ///   - `distribute_completed` with `(distribute_completed, callora_v1, recipient)` topic and
+    ///     `DistributionLifecycleEvent` payload after successful transfer.
+    /// - Emits `batch_distribute_completed` with `caller` as topic and `(total, count)` as data.
+    pub fn batch_distribute(env: Env, caller: Address, payments: Vec<(Address, i128)>) {
         caller.require_auth();
         Self::require_not_paused(&env);
         Self::require_admin(&env, &caller);
@@ -519,7 +563,7 @@ impl Distribute {
         let contract_address = env.current_contract_address();
         let max_distribute = Self::get_max_distribute(env.clone());
 
-        // Phase 1 â€” validate all legs and compute total
+        // Phase 1 — validate all legs and compute total
         let mut total: i128 = 0;
         for i in 0..n {
             let (ref to, amount) = payments.get(i).expect("payment leg");
@@ -536,7 +580,7 @@ impl Distribute {
                 .unwrap_or_else(|| env.panic_with_error(DistributeError::Overflow));
         }
 
-        // Phase 2 â€” check total balance
+        // Phase 2 — check total balance
         if usdc.balance(&contract_address) < total {
             env.panic_with_error(DistributeError::InsufficientBalance);
         }
@@ -545,7 +589,7 @@ impl Distribute {
             .instance()
             .extend_ttl(LIFETIME_THRESHOLD, BUMP_AMOUNT);
 
-        // Phase 3 â€” emit started event
+        // Phase 3 — emit started event
         env.events().publish(
             (
                 events::event_batch_distribute_started(&env),
@@ -555,15 +599,29 @@ impl Distribute {
             (total, n),
         );
 
-        // Phase 4 â€” execute transfers
+        // Phase 4 — execute transfers with per-leg transfer and lifecycle events
         for i in 0..n {
             let (to, amount) = payments.get(i).expect("payment leg");
+            let lifecycle = events::DistributionLifecycleEvent::new(
+                &env,
+                amount,
+                events::DistributionMode::Batch,
+                i,
+                n,
+            );
+            events::emit_distribute_started(&env, &to, &lifecycle);
             usdc.transfer(&contract_address, &to, &amount);
+            events::emit_distribute(&env, &to, amount);
+            events::emit_distribute_completed(&env, &to, &lifecycle);
         }
 
-        // Phase 5 â€” emit completed event
+        // Phase 5 — emit completed event
         env.events().publish(
-            (events::event_batch_distribute_completed(&env), events::event_version_v1(&env), caller),
+            (
+                events::event_batch_distribute_completed(&env),
+                events::event_version_v1(&env),
+                caller,
+            ),
             (total, n),
         );
     }
@@ -611,7 +669,11 @@ impl Distribute {
             .instance()
             .extend_ttl(LIFETIME_THRESHOLD, BUMP_AMOUNT);
         env.events().publish(
-            (events::event_upgraded(&env), events::event_version_v1(&env), Self::admin(&env)),
+            (
+                events::event_upgraded(&env),
+                events::event_version_v1(&env),
+                Self::admin(&env),
+            ),
             new_wasm_hash,
         );
     }

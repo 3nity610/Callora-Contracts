@@ -1611,6 +1611,186 @@ operational edge cases (off-chain payment reconciliation, dispute resolution).
 
 ---
 
+## Contract: `callora-distribute` (v0.1.0)
+
+The distribute contract coordinates batched and single-leg USDC payouts to developers and recipients.
+All events emitted by `callora-distribute` follow the structured 3-topic shape `(action, version, subject)`
+where topic[1] is the canonical version marker `Symbol("callora_v1")`.
+
+### Lifecycle Overview (`batch_distribute`)
+
+When `batch_distribute` is called with $N$ legs:
+1. `batch_distribute_started` is emitted with `(total_amount, N)` as data.
+2. For each payment leg $i \in [0, N-1]$ in strict sequence order:
+   - `distribute_started` is emitted with recipient topic and `DistributionLifecycleEvent` payload (`mode: Batch`, `batch_index: i`, `batch_size: N`).
+   - The token transfer `usdc.transfer(contract, recipient, amount)` is executed.
+   - `distribute` is emitted with recipient topic and `amount: i128` data.
+   - `distribute_completed` is emitted with recipient topic and `DistributionLifecycleEvent` payload (`mode: Batch`, `batch_index: i`, `batch_size: N`).
+3. `batch_distribute_completed` is emitted with `(total_amount, N)` as data, where `total_amount` strictly equals the sum of the $N$ per-leg amounts.
+
+If any leg fails or validation fails, the entire transaction reverts atomically and no events are persisted to the ledger.
+
+### `batch_distribute_started`
+
+Emitted immediately after parameter validation passes, prior to executing any payout legs.
+
+| Index   | Location | Type         | Description                                        |
+|---------|----------|--------------|----------------------------------------------------|
+| topic 0 | topics   | Symbol       | `"batch_distribute_started"`                       |
+| topic 1 | topics   | Symbol       | `"callora_v1"`                                     |
+| topic 2 | topics   | Address      | `admin` — caller initiating the batch              |
+| data    | data     | (i128, u32)  | `(total_amount, count)` — total stroops and legs   |
+
+```json
+{
+  "topics": ["batch_distribute_started", "callora_v1", "GADMIN..."],
+  "data": [3000000, 3]
+}
+```
+
+---
+
+### `distribute_started`
+
+Emitted immediately prior to each USDC transfer leg (for both `batch_distribute` and `distribute`).
+
+| Index   | Location | Type                       | Description                                           |
+|---------|----------|----------------------------|-------------------------------------------------------|
+| topic 0 | topics   | Symbol                     | `"distribute_started"`                                |
+| topic 1 | topics   | Symbol                     | `"callora_v1"`                                         |
+| topic 2 | topics   | Address                    | `recipient` — developer receiving the leg payout      |
+| data    | data     | `DistributionLifecycleEvent` | Structured lifecycle tracking record                  |
+
+```json
+{
+  "topics": ["distribute_started", "callora_v1", "GRECIPIENT..."],
+  "data": {
+    "version": 1,
+    "amount": 1000000,
+    "mode": "Batch",
+    "batch_index": 0,
+    "batch_size": 3,
+    "ledger_sequence": 123456,
+    "timestamp": 1775000000
+  }
+}
+```
+
+---
+
+### `distribute`
+
+Emitted immediately following each successful USDC transfer leg. Provides indexers with the recipient and amount for payout reconciliation.
+
+| Index   | Location | Type    | Description                                           |
+|---------|----------|---------|-------------------------------------------------------|
+| topic 0 | topics   | Symbol  | `"distribute"`                                        |
+| topic 1 | topics   | Symbol  | `"callora_v1"`                                         |
+| topic 2 | topics   | Address | `recipient` — developer who received the transfer     |
+| data    | data     | i128    | `amount` in stroops transferred to `recipient`        |
+
+```json
+{
+  "topics": ["distribute", "callora_v1", "GRECIPIENT..."],
+  "data": 1000000
+}
+```
+
+---
+
+### `distribute_completed`
+
+Emitted immediately following the successful completion and verification of each transfer leg.
+
+| Index   | Location | Type                       | Description                                           |
+|---------|----------|----------------------------|-------------------------------------------------------|
+| topic 0 | topics   | Symbol                     | `"distribute_completed"`                              |
+| topic 1 | topics   | Symbol                     | `"callora_v1"`                                         |
+| topic 2 | topics   | Address                    | `recipient` — developer receiving the leg payout      |
+| data    | data     | `DistributionLifecycleEvent` | Structured lifecycle tracking record                  |
+
+```json
+{
+  "topics": ["distribute_completed", "callora_v1", "GRECIPIENT..."],
+  "data": {
+    "version": 1,
+    "amount": 1000000,
+    "mode": "Batch",
+    "batch_index": 0,
+    "batch_size": 3,
+    "ledger_sequence": 123456,
+    "timestamp": 1775000000
+  }
+}
+```
+
+---
+
+### `batch_distribute_completed`
+
+Emitted after all payment legs have succeeded.
+
+| Index   | Location | Type         | Description                                        |
+|---------|----------|--------------|----------------------------------------------------|
+| topic 0 | topics   | Symbol       | `"batch_distribute_completed"`                     |
+| topic 1 | topics   | Symbol       | `"callora_v1"`                                     |
+| topic 2 | topics   | Address      | `admin` — caller who executed the batch            |
+| data    | data     | (i128, u32)  | `(total_amount, count)` — verified sum and count   |
+
+```json
+{
+  "topics": ["batch_distribute_completed", "callora_v1", "GADMIN..."],
+  "data": [3000000, 3]
+}
+```
+
+---
+
+### `init`
+
+Emitted once when the distribute contract is initialized with admin and USDC token.
+
+| Index   | Location | Type               | Description                                    |
+|---------|----------|--------------------|------------------------------------------------|
+| topic 0 | topics   | Symbol             | `"init"`                                       |
+| topic 1 | topics   | Symbol             | `"callora_v1"`                                 |
+| topic 2 | topics   | Address            | `admin`                                        |
+| data    | data     | (Address, Address) | `(admin, usdc_token)`                          |
+
+---
+
+### `pause_set`
+
+Emitted when the contract pause status is updated.
+
+| Index   | Location | Type    | Description                                        |
+|---------|----------|---------|----------------------------------------------------|
+| topic 0 | topics   | Symbol  | `"pause_set"`                                      |
+| topic 1 | topics   | Symbol  | `"callora_v1"`                                     |
+| topic 2 | topics   | Address | `admin`                                            |
+| data    | data     | bool    | `paused` (`true` for paused, `false` for active)   |
+
+---
+
+### `set_max_distribute`
+
+Emitted when the per-leg distribution limit is reconfigured.
+
+| Index   | Location | Type         | Description                                        |
+|---------|----------|--------------|----------------------------------------------------|
+| topic 0 | topics   | Symbol       | `"set_max_distribute"`                             |
+| topic 1 | topics   | Symbol       | `"callora_v1"`                                     |
+| topic 2 | topics   | Address      | `admin`                                            |
+| data    | data     | (i128, i128) | `(old_max, new_max)`                               |
+
+---
+
+### `admin_changed` / `admin_transfer_started` / `admin_transfer_completed` / `admin_cancelled`
+
+Two-step admin handover events following the standard Callora governance lifecycle.
+
+---
+
 ## Contract: `callora-freeze` (v0.0.1)
 
 Every state-changing entrypoint emits exactly one event. Topic[1] is always
@@ -1748,6 +1928,19 @@ Emitted by `set_freeze_operator()` for both set and clear operations.
 | `balance_credited`       | settlement      | `receive_payment()` with `to_pool=false` |
 | `vault_changed`          | settlement      | `set_vault()`                            |
 | `developer_force_credited`| settlement     | `force_credit_developer()`               |
+| `init`                   | distribute      | `init()`                                 |
+| `admin_changed`          | distribute      | `accept_admin()` / `claim_admin()`       |
+| `admin_transfer_started` | distribute      | `set_admin()`                            |
+| `admin_transfer_completed`| distribute     | `accept_admin()` / `claim_admin()`       |
+| `admin_cancelled`        | distribute      | `cancel_admin_transfer()`                |
+| `pause_set`              | distribute      | `pause()` / `unpause()`                  |
+| `set_max_distribute`     | distribute      | `set_max_distribute()`                   |
+| `batch_distribute_started` | distribute    | `batch_distribute()` before legs         |
+| `batch_distribute_completed`| distribute   | `batch_distribute()` after all legs      |
+| `distribute`             | distribute      | each payment leg in `batch_distribute()` and `distribute()` |
+| `distribute_started`     | distribute      | before each transfer in `batch_distribute()` and `distribute()` |
+| `distribute_completed`   | distribute      | after each transfer in `batch_distribute()` and `distribute()` |
+| `upgraded`               | distribute      | `upgrade()`                              |
 | `freeze_initialized`     | freeze          | `init()`                                 |
 | `freeze_set`             | freeze          | `freeze()`                               |
 | `freeze_cleared`         | freeze          | `unfreeze()`                             |
@@ -1772,5 +1965,7 @@ Emitted by `set_freeze_operator()` for both set and clear operations.
 | 0.2.0   | settlement    | Added `developer_min_balance_changed` event on `set_developer_min_balance()` (Issue #633) |
 | 0.3.0   | vault         | Added `"callora_v1"` version marker at topic[1] for `withdraw`, `withdraw_to`, `distribute`, `rescue_funds`, `reserve_cap_set`, `request_id_pruned` (Issue #1118) |
 | 0.3.0   | vault         | Version symbol renamed `"callora.v1"` → `"callora_v1"` (dot not allowed in Soroban Symbol charset) |
+| 0.1.0   | distribute    | Initial distribute contract with batch and per-leg transfer events |
+| 0.1.1   | distribute    | Publish per-leg transfer events (`distribute_started`, `distribute`, `distribute_completed`) with recipient topic and `DistributionLifecycleEvent` payload for payout reconciliation |
 | 0.0.1   | freeze        | Added `freeze_initialized`, `freeze_set`, `freeze_cleared`, `freeze_operator_set` events; `reason` persisted in storage; `get_freeze_status()` view added (Issue #1217) |
 | 0.3.0   | revenue-pool  | Moved `admin_changed` from `set_admin()` to `accept_admin()` so nomination no longer announces a change (Issue #1163) |

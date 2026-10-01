@@ -1,7 +1,7 @@
 # Callora Contracts — Structured Events Index
 
 This document is the canonical index of every event emitted by the Callora
-smart contracts (`settlement`, `revenue_pool`, `vault`, `whitelist`). It defines the
+smart contracts (`settlement`, `revenue_pool`, `vault`, `whitelist`, `distribute`). It defines the
 target topic structure for off-chain consumers, lists every currently
 emitted event with its actual topic shape, and defines the backwards-compat
 ladder for migrating existing events toward the target shape without
@@ -184,6 +184,23 @@ returns `WhitelistError::AddressAlreadyInWhitelist`
 *before* any event is published, so duplicate add attempts emit nothing.
 Similarly, a cool-off rejection or authorization failure aborts before the
 publish call, so no spurious events are emitted for rejected mutations.
+### `distribute` contract
+
+| Event topic (action) | Constructor | Subject (topic2) | Data payload |
+|---|---|---|---|
+| `init` | `event_init` | admin | `(admin, usdc_token)` |
+| `admin_changed` | `event_admin_changed` | previous admin | `(previous_admin, new_admin)` (emitted on accept) |
+| `admin_transfer_started` | `event_admin_transfer_started` | current admin | `pending_admin` |
+| `admin_transfer_completed` | `event_admin_transfer_completed` | new admin | — |
+| `admin_cancelled` | `event_admin_cancelled` | current admin | — |
+| `pause_set` | `event_pause_set` | admin | `true` (paused) / `false` (unpaused) |
+| `set_max_distribute` | `event_set_max_distribute` | admin | `(old_max, max_distribute)` |
+| `batch_distribute_started` | `event_batch_distribute_started` | admin | `(total_amount, count)` |
+| `batch_distribute_completed` | `event_batch_distribute_completed` | admin | `(total_amount, count)` |
+| `distribute_started` | `event_distribute_started` | recipient | `DistributionLifecycleEvent` |
+| `distribute` | `event_distribute` | recipient | `amount` (i128) |
+| `distribute_completed` | `event_distribute_completed` | recipient | `DistributionLifecycleEvent` |
+| `upgraded` | `event_upgraded` | admin | new WASM hash |
 
 ## CI Gate
 
