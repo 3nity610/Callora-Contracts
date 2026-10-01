@@ -280,6 +280,11 @@ impl CalloraVault {
             return Err(VaultError::MinDepositExceedsMaxDeduct);
         }
 
+        let initial_balance_val = initial_balance.unwrap_or(0);
+        if initial_balance_val < 0 {
+            return Err(VaultError::InitialBalanceNegative);
+        }
+
         env.storage().instance().set(&DataKey::Owner, &owner);
         // The admin role defaults to the owner at initialization so the
         // timelocked lifecycle actions (pause / upgrade / sweep) and
@@ -291,10 +296,14 @@ impl CalloraVault {
             .set(&DataKey::UsdcToken, &usdc_token);
         env.storage()
             .instance()
-            .set(&DataKey::Balance, &initial_balance);
-        env.storage()
-            .instance()
-            .set(&DataKey::AuthorizedCaller, &authorized_caller);
+            .set(&DataKey::Balance, &initial_balance_val);
+            
+        if let Some(ac) = authorized_caller {
+            env.storage()
+                .instance()
+                .set(&DataKey::AuthorizedCaller, &ac);
+        }
+        
         env.storage()
             .instance()
             .set(&DataKey::MinDeposit, &min_dep_val);
@@ -312,7 +321,7 @@ impl CalloraVault {
         env.storage().instance().set(&DataKey::Paused, &false);
 
         env.events()
-            .publish((events::event_init(&env), events::event_version_v1(&env), owner.clone()), initial_balance);
+            .publish((events::event_init(&env), events::event_version_v1(&env), owner.clone()), initial_balance_val);
         Ok(())
     }
 
