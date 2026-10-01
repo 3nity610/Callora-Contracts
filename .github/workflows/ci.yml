@@ -5,6 +5,7 @@ on:
     branches: [main, master, develop, 'feature/**', 'chore/**', 'ci/**']
   pull_request:
     branches: [main, master, develop]
+    types: [opened, synchronize, reopened, labeled, unlabeled]
   schedule:
     - cron: '0 0 * * *' # Run nightly
 
@@ -123,3 +124,59 @@ jobs:
         run: |
           chmod +x scripts/check-event-shape.sh
           ./scripts/check-event-shape.sh
+
+  gas-regression:
+    name: Gas regression vs baseline
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-gas-${{ hashFiles('**/Cargo.lock', '**/Cargo.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-gas-
+
+      - name: Build crates needed for gas measurement
+        run: |
+          cargo build --workspace --release
+          cargo build --package callora-settlement --target wasm32-unknown-unknown --release
+
+      - name: Run gas regression check
+        id: gas
+        shell: bash
+        env:
+          GAS_OVERRIDE: ${{ contains(github.event.pull_request.labels.*.name, 'gas-override') }}
+        run: |
+          chmod +x scripts/gas-regression.sh
+          set +e
+          ./scripts/gas-regression.sh
+          status=$?
+          set -e
+          echo "exit_code=$status" >> "$GITHUB_OUTPUT"
+          if [ "$status" -ne 0 ] && [ "$GAS_OVERRIDE" != "true" ]; then
+            echo "::error::Gas regression detected and 'gas-override' label is not present."
+            exit "$status"
+          fi
+          if [ "$status" -ne 0 ] && [ "$GAS_OVERRIDE" = "true" ]; then
+            echo "::warning::Gas regression detected but 'gas-override' label is present; allowing."
+          fi
+
+      - name: Upload gas report artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gas-report
+          path: target/gas-report.md
+          if-no-files-found: warn
