@@ -11,6 +11,8 @@ use soroban_sdk::contracterror;
 /// | 5    | TopicNotFound        | No topic with that name exists                   |
 /// | 6    | Overflow             | Arithmetic overflow in topic counter             |
 /// | 7    | InvalidDescription   | Description is empty, too long (> 256 bytes), or contains non-visible-ASCII bytes |
+/// | 8    | TopicAlreadyInactive | Topic is already deactivated                     |
+/// | 9    | SameOwner            | New topic owner equals the current owner         |
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 #[repr(u32)]
@@ -32,4 +34,8 @@ pub enum TopicsError {
     ///
     /// Validated by [`callora_validators::normalize_visible_ascii`].
     InvalidDescription = 7,
+    /// Topic is already deactivated; `deactivate` was called twice (code 8).
+    TopicAlreadyInactive = 8,
+    /// `set_topic_owner` was called with the current owner (code 9).
+    SameOwner = 9,
 }
