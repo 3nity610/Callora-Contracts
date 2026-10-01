@@ -4,7 +4,7 @@ extern crate std;
 
 use callora_whitelist::{CalloraWhitelist, CalloraWhitelistClient};
 use soroban_sdk::testutils::{Address as _, Ledger as _};
-use soroban_sdk::{Address, Env, Symbol};
+use soroban_sdk::{Address, Env};
 
 fn create_contract(env: &Env) -> CalloraWhitelistClient<'_> {
     let contract_id = env.register(CalloraWhitelist, ());
@@ -127,7 +127,7 @@ fn get_admin_does_not_require_auth() {
     let (admin, client) = setup(&env);
 
     env.set_auths(&[]);
-    assert_eq!(client.get_admin().unwrap(), admin);
+    assert_eq!(client.get_admin(), admin);
 }
 
 #[test]
@@ -210,5 +210,5 @@ fn admin_with_auth_can_call_all_entrypoints() {
     client.cancel_admin_transfer(&admin);
     client.set_admin(&admin, &new_admin);
     client.accept_admin();
-    assert_eq!(client.get_admin().unwrap(), new_admin);
+    assert_eq!(client.get_admin(), new_admin);
 }

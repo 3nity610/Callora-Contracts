@@ -1,7 +1,7 @@
 # Callora Contracts — Structured Events Index
 
 This document is the canonical index of every event emitted by the Callora
-smart contracts (`settlement`, `revenue_pool`, `vault`). It defines the
+smart contracts (`settlement`, `revenue_pool`, `vault`, `whitelist`). It defines the
 target topic structure for off-chain consumers, lists every currently
 emitted event with its actual topic shape, and defines the backwards-compat
 ladder for migrating existing events toward the target shape without
@@ -154,6 +154,36 @@ individual events through the ladder as indexer needs arise.
 | `revenue_pool_cancelled` | `event_revenue_pool_cancelled` | — | — |
 | `request_id_pruned` | `event_request_id_pruned` | caller | pruned request ID |
 | `admin_broadcast` | `event_admin_broadcast` | caller | `AdminBroadcast { severity, message }` |
+
+### `whitelist` contract
+
+Whitelist access-list mutations are prime audit targets, so every mutating
+entrypoint emits exactly one event. All whitelist events are published in the
+versioned shape `(action, version, subject[, affected])`:
+
+| Topic position | Value |
+|---|---|
+| Topic 0 | action symbol (see table below) |
+| Topic 1 | `callora_v1` (`event_version_v1`) — schema version marker |
+| Topic 2 | the authorized caller (for `accept_admin`, the nominee) |
+| Topic 3 | the affected address, when there is exactly one |
+
+| Event topic (action) | Constructor | Trigger | Topics (beyond version) | Data payload |
+|---|---|---|---|---|
+| `init` | `event_init` | `init` registers the owner/admin | admin | owner/admin address |
+| `address_added` | `event_address_added` | `add_address` appends an address | caller, address | `()` |
+| `address_removed` | `event_address_removed` | `remove_address` removes an address | caller, address | `()` |
+| `whitelist_cleared` | `event_whitelist_cleared` | `clear_all` empties the whitelist | caller | number of entries cleared (`u32`) |
+| `admin_nominated` | `event_admin_nominated` | `set_admin` nominates a successor | caller, new admin | new admin address |
+| `admin_accepted` | `event_admin_accepted` | `accept_admin` completes the transfer | new admin | new admin address |
+| `admin_cooldown_set` | `event_admin_cooldown_set` | `set_admin_cooldown` updates the window | caller | new window in seconds (`u64`) |
+
+**Failure-mode note:** `add_address` on an address that is already present
+returns `WhitelistError::AddressAlreadyInWhitelist`
+([`contracts/whitelist/src/errors.rs`](../contracts/whitelist/src/errors.rs))
+*before* any event is published, so duplicate add attempts emit nothing.
+Similarly, a cool-off rejection or authorization failure aborts before the
+publish call, so no spurious events are emitted for rejected mutations.
 
 ## CI Gate
 

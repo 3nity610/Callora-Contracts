@@ -548,6 +548,7 @@ name = "callora-yield"
 version = "0.0.1"
 dependencies = [
  "callora-revenue-pool",
+ "callora-storage-migration",
  "soroban-sdk",
 ]
 
