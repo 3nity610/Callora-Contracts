@@ -15,6 +15,7 @@
 //! | 7    | SubscriptionsAtCap    | Account's active subscription count is at the configured cap |
 //! | 8    | CounterUnderflow      | `clear_*` was called when the corresponding counter was zero  |
 //! | 9    | Overflow              | `checked_add` overflow detected on a counter increment        |
+//! | 10   | OperatorNotSet        | No operator contract has been configured by the admin         |
 //!
 //! All variants implement [`Copy`] + [`PartialEq`] so they can be returned by
 //! value or pinned in arrays without allocation.
@@ -63,4 +64,13 @@ pub enum YieldLimitError {
     /// counter arithmetic saturates `u32::MAX` — surfaces a stable error
     /// rather than panicking so callers cannot rely on undefined behaviour.
     Overflow = 9,
+    /// No operator contract has been configured by the admin (code 10).
+    ///
+    /// Returned by counter-mutating entry points (`place_bet`, `clear_bet`,
+    /// `open_position`, `close_position`, `subscribe`, `unsubscribe`) when the
+    /// admin has not yet set the authorized operator contract via
+    /// `set_operator`. Without a configured operator, no account may
+    /// increment or decrement its own counters, so the caps cannot be gamed
+    /// by self-reported state changes.
+    OperatorNotSet = 10,
 }

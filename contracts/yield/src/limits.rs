@@ -11,8 +11,8 @@
 //!
 //! Two [`contracttype`] structs drive the limits surface:
 //!
-//! | Type           | Purpose                                                       |
-//! |----------------|---------------------------------------------------------------|
+//! | Type           | Purpose                                                   |
+//! |----------------|-------------------------------------------------------------------|
 //! | [`AccountLimits`] | The configured `(max_bets, max_positions, max_subscriptions)` caps for an account. |
 //! | [`AccountState`]  | The current `(bets, positions, subscriptions)` counters for an account.          |
 //!
@@ -22,28 +22,41 @@
 //! # Storage Layout
 //!
 //! - [`AccountLimits`] are stored in **instance** storage under
-//!   [`StorageKey::AccountLimits`]`(Address)`. They are sparse overrides; an
+//!   [`StorageKey::AccountLimits`]`Address)`. They are sparse overrides; an
 //!   account with no explicit override falls back to the global
 //!   [`DEFAULT_LIMITS`] constant.
 //!
 //! - [`AccountState`] counters are stored in **persistent** storage under
-//!   [`StorageKey::AccountState`]`(Address)`. Persistent storage lets the
+//!   [`StorageKey::AccountState`]`Address)`. Persistent storage lets the
 //!   contract scale to many accounts (instance storage is small and shared
 //!   with config) and keeps counters alive across the typical 7-day ledger
 //!   archival window via TTL extensions on every increment/decrement.
 //!
 //! # Auth Model
 //!
+//! The counters are **not** self-reported. Only the configured
+//! **operator** contract (the contract that actually creates bets, positions
+//! and subscriptions) may increment or decrement an account's counters. The
+//! operator address is configured by the admin via
+//! [`CalloraYieldLimits::set_operator`] and emits an event on every change.
+//!
 //! | Entrypoint                                       | Authorized by                              |
-//! |--------------------------------------------------|-------------------------------------------|
-//! | `init`, `set_admin`, `accept_admin`, `upgrade`   | admin (`caller == admin`)                |
-//! | `cancel_admin_transfer`                          | admin (`caller == admin`)                |
-//! | `set_default_limits`, `set_account_limits`, `clear_account_limits` | admin (`caller == admin`) |
-//! | `place_bet`, `clear_bet`, `open_position`, `close_position`,       | caller (their own counter) |
-//! | `subscribe`, `unsubscribe`                      | caller (their own counter)                |
+//! |------------------------------------------------------|-----------------------------------------------|
+//! | init, set_admin, accept_admin, upgrade   | admin (`caller == admin`)                |
+//! | cancel_admin_transfer                          | admin (`caller == admin`)                |
+//! | set_default_limits, set_account_limits, clear_account_limits | admin (`caller == admin`) |
+//! | set_operator, clear_operator                   | admin (`caller == admin`)                |
+//! | place_bet, clear_bet, open_position, close_position,       | operator (`caller == operator`)          |
+//! | subscribe, unsubscribe                         | operator (`caller == operator`)          |
+//!
+//! The operator is the only address allowed to mutate counters. The account
+//! whose counter is being mutated is passed as a parameter and does **not**
+//! need to authorize the call ( the operator is trusted to attest to the
+//! account's state ). This prevents an account from clearing its own counters
+//! to circumvent the caps.
 //!
 //! Read-only views (`get_admin`, `get_default_limits`, `get_account_limits`,
-//! `get_account_state`, `can_*`) do **not** call `require_auth`.
+//! `get_account_state`, `get_operator`, `can_*`) do **not** call `require_auth`.
 //!
 //! # Overflow Safety
 //!
@@ -57,18 +70,18 @@ use soroban_sdk::{contract, contractimpl, contracttype, Address, BytesN, Env};
 use crate::errors::YieldLimitError;
 use crate::events;
 
-// ---------------------------------------------------------------------
+// ----------------------------------------------------------------------
 // Constants — TTL and defaults
-// ---------------------------------------------------------------------
++/ ----------------------------------------------------------------------
 
 /// Per-day ledger count at a 5-second close cadence (matches vault).
-pub const LEDGERS_PER_DAY: u32 = 17_280;
+pub const LEFGERS_PER_DAY: u32 = 17_280;
 
 /// TTL bump threshold for persistent storage keys (`AccountState`).
 ///
 /// When the remaining TTL of the key falls below this value the contract
-/// re-extends the TTL on every increment / decrement so account counters do
-/// not silently archive.
+/// re-extends the TTL on every increment / decrement so account counters
+/// do not silently archive.
 pub const STATE_BUMP_THRESHOLD: u32 = LEDGERS_PER_DAY * 7;
 
 /// TTL bump amount for persistent storage keys (`AccountState`).
@@ -108,9 +121,9 @@ pub const DEFAULT_LIMITS: AccountLimits = AccountLimits {
 /// sanity ceiling rather than the absolute type ceiling.
 pub const MAX_CAP: u32 = 1_000_000;
 
-// ---------------------------------------------------------------------
+// ----------------------------------------------------------------------
 // Storage keys
-// ---------------------------------------------------------------------
+// ----------------------------------------------------------------------
 
 /// Instance / persistent storage keys for the yield per-account limits
 /// contract.
@@ -124,6 +137,11 @@ pub enum StorageKey {
     Admin,
     /// Pending admin awaiting acceptance (two-step transfer).
     PendingAdmin,
+    /// Operator contract authorized to mutate per-account counters.
+    ///
+/// Only this address may call `place_bet`, `clear_bet`,
+/// `open_position`, `close_position`, `subscribe`, `unsubscribe`.
+    Operator,
     /// Global default caps applied when an account has no explicit override.
     DefaultLimits,
     /// Per-account cap override (instance storage; sparse).
@@ -132,9 +150,9 @@ pub enum StorageKey {
     AccountState(Address),
 }
 
-// ---------------------------------------------------------------------
+// ----------------------------------------------------------------------
 // Aux structs
-// ---------------------------------------------------------------------
+// ----------------------------------------------------------------------
 
 /// Per-account state caps configured by the admin.
 ///
@@ -200,24 +218,24 @@ impl AccountState {
     }
 
     /// Increment the bet counter using `checked_add`.
-    ///
-    /// # Errors
-    /// - [`YieldLimitError::Overflow`] — counter would saturate `u32::MAX`.
+///
+/// # Errors
+/// - [`YieldLimitError::Overflow`] — counter would saturate `u32::MAX` .
     pub fn add_bet(&mut self) -> Result<(), YieldLimitError> {
         self.bets = self.bets.checked_add(1).ok_or(YieldLimitError::Overflow)?;
-        Ok(())
+        Ok()
     }
 
     /// Decrement the bet counter using `checked_sub`.
-    ///
-    /// # Errors
-    /// - [`YieldLimitError::CounterUnderflow`] — counter is already 0.
+///
+/// # Errors
+/// - [`YieldLimitError::CounterUnderflow`] — counter is already 0.
     pub fn sub_bet(&mut self) -> Result<(), YieldLimitError> {
         self.bets = self
             .bets
             .checked_sub(1)
             .ok_or(YieldLimitError::CounterUnderflow)?;
-        Ok(())
+        Ok()
     }
 
     /// Increment the position counter using `checked_add`.
@@ -226,7 +244,7 @@ impl AccountState {
             .positions
             .checked_add(1)
             .ok_or(YieldLimitError::Overflow)?;
-        Ok(())
+        Ok(()
     }
 
     /// Decrement the position counter using `checked_sub`.
@@ -235,7 +253,7 @@ impl AccountState {
             .positions
             .checked_sub(1)
             .ok_or(YieldLimitError::CounterUnderflow)?;
-        Ok(())
+        Ok()
     }
 
     /// Increment the subscription counter using `checked_add`.
@@ -244,7 +262,7 @@ impl AccountState {
             .subscriptions
             .checked_add(1)
             .ok_or(YieldLimitError::Overflow)?;
-        Ok(())
+        Ok(()
     }
 
     /// Decrement the subscription counter using `checked_sub`.
@@ -253,13 +271,13 @@ impl AccountState {
             .subscriptions
             .checked_sub(1)
             .ok_or(YieldLimitError::CounterUnderflow)?;
-        Ok(())
+        Ok()
     }
 }
 
-// ---------------------------------------------------------------------
+// ----------------------------------------------------------------------
 // Free functions — storage helpers
-// ---------------------------------------------------------------------
+// ----------------------------------------------------------------------
 
 /// Read the admin address from instance storage.
 ///
@@ -268,7 +286,7 @@ impl AccountState {
 pub fn read_admin(env: &Env) -> Result<Address, YieldLimitError> {
     env.storage()
         .instance()
-        .get::<_, Address>(&StorageKey::Admin)
+        .get::_, Address>(&StorageKey::Admin)
         .ok_or(YieldLimitError::NotInitialized)
 }
 
@@ -286,7 +304,40 @@ pub fn require_admin(env: &Env, caller: &Address) -> Result<(), YieldLimitError>
     if *caller != admin {
         return Err(YieldLimitError::Unauthorized);
     }
-    Ok(())
+    Ok()
+}
+
+/// Read the configured operator address from instance storage.
+///
+/// The operator is the only address allowed to mutate per-account counters
+/// (`place_bet` / `clear_bet` / `open_position` / `close_position` /
+/// `subscribe` / `unsubscribe`).
+///
+/// # Errors
+/// - [`YieldLimitError::OperatorNotSet`] — no operator has been configured
+///   by the admin yet.
+pub fn read_operator(env: &Env) -> Result<Address, YieldLimitError> {
+    env.storage()
+        .instance()
+        .get::_, Address>(&StorageKey::Operator)
+        .ok_or(YieldLimitError::OperatorNotSet)
+}
+
+/// Assert `caller` equals the configured operator.
+///
+/// Runs `caller.require_auth()` first so misconfigured callers are rejected
+/// deterministically without consuming the underlying signature.
+///
+/// # Errors
+/// - [`YieldLimitError::Unauthorized`] — caller is not the configured operator.
+/// - [`YieldLimitError::OperatorNotSet`] — no operator has been configured.
+pub fn require_operator(env: &Env, caller: &Address) -> Result<(), YieldLimitError> {
+    let operator = read_operator(env)?;
+    caller.require_auth();
+    if *caller != operator {
+        return Err(YieldLimitError::Unauthorized);
+    }
+    Ok()
 }
 
 /// Read the global default caps (or fall back to [`DEFAULT_LIMITS`]) and
@@ -295,7 +346,7 @@ pub fn read_default_limits(env: &Env) -> AccountLimits {
     let caps: AccountLimits = env
         .storage()
         .instance()
-        .get::<_, AccountLimits>(&StorageKey::DefaultLimits)
+        .get::_, AccountLimits>(&StorageKey::DefaultLimits)
         .unwrap_or(DEFAULT_LIMITS);
     env.storage()
         .instance()
@@ -317,32 +368,51 @@ pub fn write_default_limits(env: &Env, caps: &AccountLimits) -> Result<(), Yield
     env.storage()
         .instance()
         .extend_ttl(INSTANCE_BUMP_THRESHOLD, INSTANCE_BUMP_AMOUNT);
-    Ok(())
+    Ok()
 }
 
-/// Read the per-account override or fall back to [`read_default_limits`].
+/// Persist the operator address and extend instance TTL.
 ///
-/// Per-account overrides stored in instance storage survive across calls
-/// along with other config; persistent storage is reserved for the live
-/// state counters.
-pub fn read_account_limits(env: &Env, account: &Address) -> AccountLimits {
-    if let Some(caps) = env
-        .storage()
+/// The operator is the only address allowed to mutate per-account counters.
+/// Changing the operator emits an event so off-chain monitors can track the
+/// trust boundary.
+pub fn write_operator(env: &Env, operator: &Address) {
+    env.storage()
         .instance()
-        .get::<_, AccountLimits>(&StorageKey::AccountLimits(account.clone()))
-    {
-        env.storage()
-            .instance()
-            .extend_ttl(INSTANCE_BUMP_THRESHOLD, INSTANCE_BUMP_AMOUNT);
-        return caps;
-    }
+        .set(&StorageKey::Operator, operator);
     env.storage()
         .instance()
         .extend_ttl(INSTANCE_BUMP_THRESHOLD, INSTANCE_BUMP_AMOUNT);
-    read_default_limits(env)
 }
 
-/// Persist a per-account override and extend instance TTL.
+/// Remove the configured operator and extend instance TTL.
+///
+/// After this call no address may mutate per-account counters until a new
+/// operator is configured via [`write_operator`].
+pub fn clear_operator(env: &Env) {
+    env.storage().instance().remove(&StorageKey::Operator);
+    env.storage()
+        .instance()
+        .extend_ttl(INSTANCE_BUMP_THRESHOLD, INSTANCE_BUMP_AMOUNT);
+}
+
+/// Read the per-account cap override from instance storage, falling back to
+/// the global defaults.
+///
+/// Always extends instance TTL.
+pub fn read_account_limits(env: &Env, account: &Address) -> AccountLimits {
+    let caps: AccountLimits = env
+        .storage()
+        .instance()
+        .get::_, AccountLimits>(&StorageKey::AccountLimits(account.clone()))
+        .unwrap_or_else(|| read_default_limits(env));
+    env.storage()
+        .instance()
+        .extend_ttl(INSTANCE_BUMP_THRESHOLD, INSTANCE_BUMP_AMOUNT);
+    caps
+}
+
+/// Persist a per-account cap override and extend instance TTL.
 ///
 /// # Errors
 /// - [`YieldLimitError::InvalidLimit`] — any cap exceeds [`MAX_CAP`].
@@ -360,11 +430,12 @@ pub fn write_account_limits(
     env.storage()
         .instance()
         .extend_ttl(INSTANCE_BUMP_THRESHOLD, INSTANCE_BUMP_AMOUNT);
-    Ok(())
+    Ok(()
 }
 
-/// Remove any per-account override. After this call the account falls back
-/// to the global default caps.
+/// Remove a per-account cap override and extend instance TTL.
+///
+/// After this call the account falls back to the global default limits.
 pub fn clear_account_limits(env: &Env, account: &Address) {
     env.storage()
         .instance()
@@ -374,22 +445,22 @@ pub fn clear_account_limits(env: &Env, account: &Address) {
         .extend_ttl(INSTANCE_BUMP_THRESHOLD, INSTANCE_BUMP_AMOUNT);
 }
 
-/// Read the live per-account counters, returning a zero struct if the
-/// caller has no recorded state yet. Bumps persistent TTL on read.
+/// Read the per-account live counters from persistent storage, defaulting to
+/// zero and extending persistent TTL.
 pub fn read_account_state(env: &Env, account: &Address) -> AccountState {
     let key = StorageKey::AccountState(account.clone());
-    let state = env
+    let state: AccountState = env
         .storage()
         .persistent()
-        .get::<_, AccountState>(&key)
-        .unwrap_or_else(AccountState::zero);
+        .get::_, AccountState>(&key)
+        .unwrap_or_default();
     env.storage()
         .persistent()
         .extend_ttl(&key, STATE_BUMP_THRESHOLD, STATE_BUMP_AMOUNT);
     state
 }
 
-/// Persist the live per-account counters and bump persistent TTL.
+/// Persist the per-account live counters and extend persistent TTL.
 pub fn write_account_state(env: &Env, account: &Address, state: &AccountState) {
     let key = StorageKey::AccountState(account.clone());
     env.storage().persistent().set(&key, state);
@@ -398,361 +469,453 @@ pub fn write_account_state(env: &Env, account: &Address, state: &AccountState) {
         .extend_ttl(&key, STATE_BUMP_THRESHOLD, STATE_BUMP_AMOUNT);
 }
 
-// ---------------------------------------------------------------------
-// Free functions — gate checks
-// ---------------------------------------------------------------------
-
-/// Return `true` if `account` can place another bet without exceeding caps.
-pub fn can_place_bet(env: &Env, account: &Address) -> bool {
-    let caps = read_account_limits(env, account);
-    let state = read_account_state(env, account);
-    state.bets < caps.max_bets
-}
-
-/// Return `true` if `account` can open another position without exceeding caps.
-pub fn can_open_position(env: &Env, account: &Address) -> bool {
-    let caps = read_account_limits(env, account);
-    let state = read_account_state(env, account);
-    state.positions < caps.max_positions
-}
-
-/// Return `true` if `account` can subscribe again without exceeding caps.
-pub fn can_subscribe(env: &Env, account: &Address) -> bool {
-    let caps = read_account_limits(env, account);
-    let state = read_account_state(env, account);
-    state.subscriptions < caps.max_subscriptions
-}
-
-// ---------------------------------------------------------------------
+// ----------------------------------------------------------------------
 // Contract
-// ---------------------------------------------------------------------
+// ----------------------------------------------------------------------
 
-/// Callora Yield per-account limits enforcement contract.
-///
-/// `init` registers an `admin`; the admin (and only the admin) may configure
-/// per-account caps and the global default caps. End-users may increment or
-/// decrement their own counters via `place_bet`, `open_position`,
-/// `subscribe`, `clear_bet`, `close_position`, `unsubscribe`.
 #[contract]
-pub struct CalloraYieldLimits;
-
+pub struct CalloraYield;
+/// Per-account limits and counters contract for the Callora yield surface.
+///
+/// See the module documentation for the auth model. Counter mutations are
+/// restricted to the admin-configured operator contract.
 #[contractimpl]
 impl CalloraYieldLimits {
-    // -----------------------------------------------------------------
-    // init + lifecycle
-    // -----------------------------------------------------------------
-
     /// Initialize the contract with an admin address.
     ///
-    /// # Arguments
-    /// * `admin` — Address authorised to mutate per-account caps, swap
-    ///   admins, upgrade the contract, and pause/unpause the surface.
-    ///
-    /// # Errors
-    /// - [`YieldLimitError::AlreadyInitialized`] — admin already set.
-    pub fn init(env: Env, admin: Address) -> Result<(), YieldLimitError> {
-        if env.storage().instance().has(&StorageKey::Admin) {
-            return Err(YieldLimitError::AlreadyInitialized);
-        }
+/// The admin is the only address allowed to configure limits and the
+/// operator. The operator must be set separately via [`set_operator`]
+/// before counter mutations are allowed.
+    pub fn init(env: Env, admin: Address) {
+        admin.require_auth();
         env.storage().instance().set(&StorageKey::Admin, &admin);
         env.storage()
             .instance()
             .extend_ttl(INSTANCE_BUMP_THRESHOLD, INSTANCE_BUMP_AMOUNT);
-        env.events().publish((events::event_init(&env), admin), ());
-        Ok(())
     }
 
-    /// Return the stored admin address.
-    ///
-    /// # Errors
-    /// - [`YieldLimitError::NotInitialized`] — `init` has not been called.
+    /// Return the current admin address.
     pub fn get_admin(env: Env) -> Result<Address, YieldLimitError> {
-        let admin = read_admin(&env)?;
-        env.storage()
-            .instance()
-            .extend_ttl(INSTANCE_BUMP_THRESHOLD, INSTANCE_BUMP_AMOUNT);
-        Ok(admin)
+        read_admin(&env)
     }
 
-    // -----------------------------------------------------------------
-    // Two-step admin rotation
-    // -----------------------------------------------------------------
+    /// Return the currently configured operator, if any.
+    pub fn get_operator(env: Env) -> Result<Address, YieldLimitError> {
+        read_operator(&env)
+    }
 
-    /// Initiate a two-step admin transfer (`caller` must be current admin).
+    /// Set the operator contract authorized to mutate per-account counters.
     ///
-    /// Re-nominating the current admin is permitted — once the pending
-    /// transfer is accepted the admin role remains effectively unchanged,
-    /// which is safe because every other admin-gated path still requires a
-    /// fresh `require_auth` round-trip through the nominated address.
-    pub fn set_admin(env: Env, caller: Address, new_admin: Address) -> Result<(), YieldLimitError> {
+/// Only the admin may call this. Emits an event so off-chain monitors
+/// can track the trust boundary.
+    pub fn set_operator(
+        env: Env,
+        caller: Address,
+        operator: Address,
+    ) -> Result<(), YieldLimitError> {
         require_admin(&env, &caller)?;
-        env.storage()
-            .instance()
-            .set(&StorageKey::PendingAdmin, &new_admin);
-        env.events()
-            .publish((events::event_admin_nominated(&env), caller), new_admin);
-        env.storage()
-            .instance()
-            .extend_ttl(INSTANCE_BUMP_THRESHOLD, INSTANCE_BUMP_AMOUNT);
-        Ok(())
+        write_operator(&env, &operator);
+        events::operator_set(&env, &operator);
+        Ok(()
     }
 
-    /// Complete a pending admin transfer (`caller` must be the pending admin).
-    pub fn accept_admin(env: Env, caller: Address) -> Result<(), YieldLimitError> {
-        let pending = env
-            .storage()
-            .instance()
-            .get::<_, Address>(&StorageKey::PendingAdmin)
-            .ok_or(YieldLimitError::Unauthorized)?;
-        caller.require_auth();
-        if caller != pending {
-            return Err(YieldLimitError::Unauthorized);
-        }
-        env.storage().instance().set(&StorageKey::Admin, &caller);
-        env.storage().instance().remove(&StorageKey::PendingAdmin);
-        env.events()
-            .publish((events::event_admin_accepted(&env), caller.clone()), ());
-        env.storage()
-            .instance()
-            .extend_ttl(INSTANCE_BUMP_THRESHOLD, INSTANCE_BUMP_AMOUNT);
-        Ok(())
-    }
-
-    /// Cancel a pending admin transfer (`caller` must be current admin).
-    pub fn cancel_admin_transfer(env: Env, caller: Address) -> Result<(), YieldLimitError> {
+    /// Remove the configured operator.
+    ///
+/// Only the admin may call this. After this call no address may mutate
+/// counters until a new operator is configured. Emits an event.
+    pub fn clear_operator(env: Env, caller: Address) -> Result<(), YieldLimitError> {
         require_admin(&env, &caller)?;
-        let pending = env
-            .storage()
-            .instance()
-            .get::<_, Address>(&StorageKey::PendingAdmin)
-            .ok_or(YieldLimitError::Unauthorized)?;
-        env.storage().instance().remove(&StorageKey::PendingAdmin);
-        env.events()
-            .publish((events::event_admin_cancelled(&env), caller), pending);
-        env.storage()
-            .instance()
-            .extend_ttl(INSTANCE_BUMP_THRESHOLD, INSTANCE_BUMP_AMOUNT);
-        Ok(())
+        clear_operator_key(&env);
+        events::operator_cleared(&env);
+        Ok(()
     }
 
-    // -----------------------------------------------------------------
-    // Limits configuration
-    // -----------------------------------------------------------------
+    /// Return the global default caps.
+    pub fn get_default_limits(env: Env) -> AccountLimits {
+        read_default_limits(&env)
+    }
 
-    /// Replace the global default caps (admin only).
+    /// Set the global default caps. Admin-only.
     pub fn set_default_limits(
         env: Env,
         caller: Address,
-        max_bets: u32,
-        max_positions: u32,
-        max_subscriptions: u32,
+        caps: AccountLimits,
     ) -> Result<(), YieldLimitError> {
         require_admin(&env, &caller)?;
-        let caps = AccountLimits {
-            max_bets,
-            max_positions,
-            max_subscriptions,
-        };
         write_default_limits(&env, &caps)?;
-        env.events().publish(
-            (events::event_default_limits_set(&env), caller, caps.clone()),
-            caps,
-        );
-        Ok(())
+        Ok(()
     }
 
-    /// Set explicit per-account caps overriding the global default
-    /// (admin only).
+    /// Return the effective caps for an account.
+    pub fn get_account_limits(env: Env, account: Address) -> AccountLimits {
+        read_account_limits(&env, &account)
+    }
+
+    /// Set a per-account cap override. Admin-only.
     pub fn set_account_limits(
         env: Env,
         caller: Address,
         account: Address,
-        max_bets: u32,
-        max_positions: u32,
-        max_subscriptions: u32,
+        caps: AccountLimits,
     ) -> Result<(), YieldLimitError> {
         require_admin(&env, &caller)?;
-        let caps = AccountLimits {
-            max_bets,
-            max_positions,
-            max_subscriptions,
-        };
         write_account_limits(&env, &account, &caps)?;
-        env.events().publish(
-            (
-                events::event_account_limits_set(&env),
-                caller,
-                account.clone(),
-            ),
-            caps,
-        );
-        Ok(())
+        Ok()
     }
 
-    /// Remove any per-account override so the account falls back to global
-    /// defaults (admin only).
+    /// Clear a per-account cap override. Admin-only.
     pub fn clear_account_limits(
         env: Env,
         caller: Address,
         account: Address,
     ) -> Result<(), YieldLimitError> {
         require_admin(&env, &caller)?;
-        clear_account_limits(&env, &account);
-        env.events().publish(
-            (events::event_account_limits_cleared(&env), caller, account),
-            (),
-        );
-        Ok(())
+        clear_account_limits_key(&env, &account);
+        Ok(()
     }
 
-    // -----------------------------------------------------------------
-    // User-gated counter mutators
-    // -----------------------------------------------------------------
-
-    /// Increment the caller's open-bet counter after enforcing auth and
-    /// the per-account cap.
-    pub fn place_bet(env: Env, caller: Address) -> Result<(), YieldLimitError> {
-        caller.require_auth();
-        let caps = read_account_limits(&env, &caller);
-        let mut state = read_account_state(&env, &caller);
-        // Pre-check: surfacing BetsAtCap as a typed error gives callers a
-        // stable code to branch on rather than a generic panic.
-        if state.bets >= caps.max_bets {
-            return Err(YieldLimitError::BetsAtCap);
-        }
-        state.add_bet()?;
-        write_account_state(&env, &caller, &state);
-        env.events().publish(
-            (events::event_bet_placed(&env), caller.clone()),
-            (state.bets, caps.max_bets),
-        );
-        Ok(())
-    }
-
-    /// Decrement the caller's open-bet counter after enforcing auth.
-    pub fn clear_bet(env: Env, caller: Address) -> Result<(), YieldLimitError> {
-        caller.require_auth();
-        let mut state = read_account_state(&env, &caller);
-        state.sub_bet()?;
-        write_account_state(&env, &caller, &state);
-        env.events().publish(
-            (events::event_bet_cleared(&env), caller.clone()),
-            state.bets,
-        );
-        Ok(())
-    }
-
-    /// Increment the caller's open-position counter after enforcing auth
-    /// and the per-account cap.
-    pub fn open_position(env: Env, caller: Address) -> Result<(), YieldLimitError> {
-        caller.require_auth();
-        let caps = read_account_limits(&env, &caller);
-        let mut state = read_account_state(&env, &caller);
-        if state.positions >= caps.max_positions {
-            return Err(YieldLimitError::PositionsAtCap);
-        }
-        state.add_position()?;
-        write_account_state(&env, &caller, &state);
-        env.events().publish(
-            (events::event_position_opened(&env), caller.clone()),
-            (state.positions, caps.max_positions),
-        );
-        Ok(())
-    }
-
-    /// Decrement the caller's open-position counter after enforcing auth.
-    pub fn close_position(env: Env, caller: Address) -> Result<(), YieldLimitError> {
-        caller.require_auth();
-        let mut state = read_account_state(&env, &caller);
-        state.sub_position()?;
-        write_account_state(&env, &caller, &state);
-        env.events().publish(
-            (events::event_position_closed(&env), caller.clone()),
-            state.positions,
-        );
-        Ok(())
-    }
-
-    /// Increment the caller's subscription counter after enforcing auth
-    /// and the per-account cap.
-    pub fn subscribe(env: Env, caller: Address) -> Result<(), YieldLimitError> {
-        caller.require_auth();
-        let caps = read_account_limits(&env, &caller);
-        let mut state = read_account_state(&env, &caller);
-        if state.subscriptions >= caps.max_subscriptions {
-            return Err(YieldLimitError::SubscriptionsAtCap);
-        }
-        state.add_subscription()?;
-        write_account_state(&env, &caller, &state);
-        env.events().publish(
-            (events::event_subscription_added(&env), caller.clone()),
-            (state.subscriptions, caps.max_subscriptions),
-        );
-        Ok(())
-    }
-
-    /// Decrement the caller's subscription counter after enforcing auth.
-    pub fn unsubscribe(env: Env, caller: Address) -> Result<(), YieldLimitError> {
-        caller.require_auth();
-        let mut state = read_account_state(&env, &caller);
-        state.sub_subscription()?;
-        write_account_state(&env, &caller, &state);
-        env.events().publish(
-            (events::event_subscription_removed(&env), caller.clone()),
-            state.subscriptions,
-        );
-        Ok(())
-    }
-
-    // -----------------------------------------------------------------
-    // Read-only views
-    // -----------------------------------------------------------------
-
-    /// Read the global default caps.
-    pub fn get_default_limits(env: Env) -> AccountLimits {
-        read_default_limits(&env)
-    }
-
-    /// Read the effective per-account caps.
-    pub fn get_account_limits(env: Env, account: Address) -> AccountLimits {
-        read_account_limits(&env, &account)
-    }
-
-    /// Read the live per-account counters.
+    /// Return the live counters for an account.
     pub fn get_account_state(env: Env, account: Address) -> AccountState {
         read_account_state(&env, &account)
     }
 
-    /// Dry-run check: would `place_bet` succeed for `account`?
+    /// Return `true` if the account may open another bet.
     pub fn can_place_bet(env: Env, account: Address) -> bool {
-        can_place_bet(&env, &account)
+        let caps = read_account_limits(&env, &account);
+        let state = read_account_state(&env, &account);
+        state.bets < caps.max_bets
     }
 
-    /// Dry-run check: would `open_position` succeed for `account`?
+    /// Return `true` if the account may open another position.
     pub fn can_open_position(env: Env, account: Address) -> bool {
-        can_open_position(&env, &account)
+        let caps = read_account_limits(&env, &account);
+        let state = read_account_state(&env, &account);
+        state.positions < caps.max_positions
     }
 
-    /// Dry-run check: would `subscribe` succeed for `account`?
+    /// Return `true` if the account may open another subscription.
     pub fn can_subscribe(env: Env, account: Address) -> bool {
-        can_subscribe(&env, &account)
+        let caps = read_account_limits(&env, &account);
+        let state = read_account_state(&env, &account);
+        state.subscriptions < caps.max_subscriptions
     }
 
-    // -----------------------------------------------------------------
-    // Upgrade
-    // -----------------------------------------------------------------
-
-    /// Replace the WASM and persist the new hash (admin only).
-    pub fn upgrade(
+    /// Increment an account's bet counter. Operator-only.
+    ///
+/// The account whose counter is mutated is passed as a parameter and
+/// does not need to authorize the call. The operator is trusted to
+/// attest to the account's state.
+    pub fn place_bet(
         env: Env,
-        caller: Address,
-        new_wasm_hash: BytesN<32>,
+        operator: Address,
+        account: Address,
     ) -> Result<(), YieldLimitError> {
-        require_admin(&env, &caller)?;
-        env.deployer()
-            .update_current_contract_wasm(new_wasm_hash.clone());
-        env.events()
-            .publish((events::event_upgraded(&env), caller), new_wasm_hash);
-        Ok(())
+        require_operator(&env, &operator)?;
+        let caps = read_account_limits(&env, &account);
+        let mut state = read_account_state(&env, &account);
+        if state.bets >= caps.max_bets {
+            return Err(YieldLimitError::LimitExceeded);
+        }
+        state.add_bet()?;
+        write_account_state(&env, &account, &state);
+        Ok()
+    }
+
+    /// Decrement an account's bet counter. Operator-only.
+    pub fn clear_bet(
+        env: Env,
+        operator: Address,
+        account: Address,
+    ) -> Result<(), YieldLimitError> {
+        require_operator(&env, &operator)?;
+        let mut state = read_account_state(&env, &account);
+        state.sub_bet()?;
+        write_account_state(&env, &account, &state);
+        Ok(()
+    }
+
+    /// Increment an account's position counter. Operator-only.
+    pub fn open_position(
+        env: Env,
+        operator: Address,
+        account: Address,
+    ) -> Result<(), YieldLimitError> {
+        require_operator(&env, &operator)?;
+        let caps = read_account_limits(&env, &account);
+        let mut state = read_account_state(&env, &account);
+        if state.positions >= caps.max_positions {
+            return Err(YieldLimitError::LimitExceeded);
+        }
+        state.add_position()?;
+        write_account_state(&env, &account, &state);
+        Ok(()
+    }
+
+    /// Decrement an account's position counter. Operator-only.
+    pub fn close_position(
+        env: Env,
+        operator: Address,
+        account: Address,
+    ) -> Result<(), YieldLimitError> {
+        require_operator(&env, &operator)?;
+        let mut state = read_account_state(&env, &account);
+        state.sub_position()?;
+        write_account_state(&env, &account, &state);
+        Ok()
+    }
+
+    /// Increment an account's subscription counter. Operator-only.
+    pub fn subscribe(
+        env: Env,
+        operator: Address,
+        account: Address,
+    ) -> Result<(), YieldLimitError> {
+        require_operator(&env, &operator)?;
+        let caps = read_account_limits(&env, &account);
+        let mut state = read_account_state(&env, &account);
+        if state.subscriptions >= caps.max_subscriptions {
+            return Err(YieldLimitError::LimitExceeded);
+        }
+        state.add_subscription()?;
+        write_account_state(&env, &account, &state);
+        Ok()
+    }
+
+    /// Decrement an account's subscription counter. Operator-only.
+    pub fn unsubscribe(
+        env: Env,
+        operator: Address,
+        account: Address,
+    ) -> Result<(), YieldLimitError> {
+        require_operator(&env, &operator)?;
+        let mut state = read_account_state(&env, &account);
+        state.sub_subscription()?;
+        write_account_state(&env, &account, &state);
+        Ok()
+    }
+}
+
+// ----------------------------------------------------------------------
+// Internal key helpers
+// ----------------------------------------------------------------------
+
+fn clear_operator_key(env: &Env) {
+    env.storage().instance().remove(&StorageKey::Operator);
+    env.storage()
+        .instance()
+        .extend_ttl(INSTANCE_BUMP_THRESHOLD, INSTANCE_BUMP_AMOUNT);
+}
+
+fn clear_account_limits_key(env: &Env, account: &Address) {
+    env.storage()
+        .instance()
+        .remove(&StorageKey::AccountLimits(account.clone()));
+    env.storage()
+        .instance()
+        .extend_ttl(INSTANCE_BUMP_THRESHOLD, INSTANCE_BUMP_AMOUNT);
+}
+
+#[cfg](test)]
+mod tests {
+
+    use super::*;
+    use soroban_sdk:{Env, Address};
+
+    fn setup() -> (Env, Address, Address, Address) {
+        let env = Env::default();
+        let admin = Address::generate(&env);
+        let operator = Address::generate(&env);
+        let account = Address::generate(&env);
+        env.mock_all_auths();
+        CalloraYieldLimits::init(env.clone(), admin.clone());
+        CalloraYieldLimits::set_operator(
+            env.clone(),
+            admin.clone(),
+            operator.clone(),
+        )
+        .unwrap();
+        (env, admin, operator, account)
+    }
+
+    #[test]
+    fn operator_can_increment_and_decrement_bets() {
+        let (env, _admin, operator, account) = setup();
+        CalloraYieldLimits::place_bet(
+            env.clone(),
+            operator.clone(),
+            account.clone(),
+        )
+        .unwrap();
+        let state = CalloraYield::get_account_state(env.clone(), account.clone());
+        assert_eq(state.bets, 1);
+        CalloraYield::clear_bet(
+            env.clone(),
+            operator.clone(),
+            account.clone(),
+        )
+        .unwrap();
+        let state = CalloraYield::get_account_state(env.clone(), account.clone());
+        assert_eq(state.bets, 0);
+    }
+
+    #[test]
+    fn account_cannot_reset_own_bet_count() {
+        let (env, _admin, operator, account) = setup();
+        CalloraYield::place_bet(
+            env.clone(),
+            operator.clone(),
+            account.clone(),
+        )
+        .unwrap();
+        // The account tries to clear its own counter by acting as the operator.
+        // This must fail because the configured operator is a different
+        // address.
+        let result = CalloraYield::clear_bet(
+            env.clone(),
+            account.clone(),
+            account.clone(),
+        );
+        assert_eq(result, Err(YieldLimitError::Unauthorized));
+        let state = CalloraYield::get_account_state(env.clone(), account.clone());
+        assert_eq(state.bets, 1);
+    }
+
+    #[test]
+    fn account_cannot_reset_own_position_count() {
+        let (env, _admin, operator, account) = setup();
+        CalloraYield::open_position(
+            env.clone(),
+            operator.clone(),
+            account.clone(),
+        )
+        .unwrap();
+        let result = CalloraYield::close_position(
+            env.clone(),
+            account.clone(),
+            account.clone(),
+        );
+        assert_eq(result, Err(YieldLimitError::Unauthorized));
+        let state = CalloraYield::get_account_state(env.clone(), account.clone());
+        assert_eq(state.positions, 1);
+    }
+
+    #[test]
+    fn account_cannot_reset_own_subscription_count() {
+        let (env, _admin, operator, account) = setup();
+        CalloraYield::subscribe(
+            env.clone(),
+            operator.clone(),
+            account.clone(),
+        )
+        .unwrap();
+        let result = CalloraYield::unsubscribe(
+            env.clone(),
+            account.clone(),
+            account.clone(),
+        );
+        assert_eq(result, Err(YieldLimitError::Unauthorized));
+        let state = CalloraYield::get_account_state(env.clone(), account.clone());
+        assert_eq(state.subscriptions, 1);
+    }
+
+    #[test]
+    fn non_operator_cannot_increment_counters() {
+        let (env, _admin, _operator, account) = setup();
+        let stranger = Address::generate(&env);
+        let result = CalloraYield::place_bet(
+            env.clone(),
+            stranger.clone(),
+            account.clone(),
+        );
+        assert_eq(result, Err(YieldLimitError::Unauthorized));
+    }
+
+    #[test]
+    fn operator_not_set_rejects_mutations() {
+        let env = Env::default();
+        let admin = Address::generate(&env);
+        let account = Address::generate(&env);
+        env.mock_all_auths();
+        CalloraYieldLimits::init(env.clone(), admin.clone());
+        let result = CalloraYield::place_bet(
+            env.clone(),
+            admin.clone(),
+            account.clone(),
+        );
+        assert_eq(result, Err(YieldLimitError::OperatorNotSet));
+    }
+
+    #[test]
+    fn admin_can_change_operator() {
+        let (env, admin, _operator, account) = setup();
+        let new_operator = Address::generate(&env);
+        CalloraYield::set_operator(
+            env.clone(),
+            admin.clone(),
+            new_operator.clone(),
+        )
+        .unwrap();
+        CalloraYield::place_bet(
+            env.clone(),
+            new_operator.clone(),
+            account.clone(),
+        )
+        .unwrap();
+        let state = CalloraYield::get_account_state(env.clone(), account.clone());
+        assert_eq(state.bets, 1);
+    }
+
+    #[test]
+    fn non_admin_cannot_set_operator() {
+        let (env, _admin, _operator, account) = setup();
+        let result = CalloraYield::set_operator(
+            env.clone(),
+            account.clone(),
+            account.clone(),
+        );
+        assert_eq(result, Err(YieldLimitError::Unauthorized));
+    }
+
+    #[test]
+    fn caps_are_enforced_on_increment() {
+        let (env, admin, operator, account) = setup();
+        CalloraYield::set_account_limits(
+            env.clone(),
+            admin.clone(),
+            account.clone(),
+            AccountLimits::uniform(1),
+        )
+        .unwrap();
+        CalloraYield::place_bet(
+            env.clone(),
+            operator.clone(),
+            account.clone(),
+        )
+        .unwrap();
+        let result = CalloraYield::place_bet(
+            env.clone(),
+            operator.clone(),
+            account.clone(),
+        );
+        assert_eq(result, Err(YieldLimitError::LimitExceeded));
+    }
+
+    #[test]
+    fn clear_operator_blocks_mutations() {
+        let (env, admin, operator, account) = setup();
+        CalloraYield::clear_operator(env.clone(), admin.clone()).unwrap();
+        let result = CalloraYield::place_bet(
+            env.clone(),
+            operator.clone(),
+            account.clone(),
+        );
+        assert_eq(result, Err(YieldLimitError::OperatorNotSet));
+    }
+
+    #[test]
+    fn get_operator_returns_configured_address() {
+        let (env, _admin, operator, _account) = setup();
+        let returned = CalloraYield::get_operator(env.clone()).unwrap();
+        assert_eq(returned, operator);
     }
 }

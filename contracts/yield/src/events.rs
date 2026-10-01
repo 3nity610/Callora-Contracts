@@ -206,6 +206,15 @@ pub fn event_upgraded(env: &Env) -> Symbol {
     Symbol::new(env, "upgraded")
 }
 
+/// Returns the Symbol for the `"operator_set"` event topic.
+///
+/// Emitted when the admin configures the authorized operator contract that
+/// is permitted to increment and decrement per-account counters via
+/// [`crate::CalloraYieldLimits::set_operator`].
+pub fn event_operator_set(env: &Env) -> Symbol {
+    Symbol::new(env, "operator_set")
+}
+
 // ---------------------------------------------------------------------------
 // Yield lifecycle event topics
 // ---------------------------------------------------------------------------
@@ -415,6 +424,13 @@ mod tests {
     fn test_event_upgraded_bytes() {
         let env = Env::default();
         assert_eq!(event_upgraded(&env), Symbol::new(&env, "upgraded"));
+    }
+
+    /// Snapshot: proves `event_operator_set` still maps to exactly the bytes for `"operator_set"`.
+    #[test]
+    fn test_event_operator_set_bytes() {
+        let env = Env::default();
+        assert_eq!(event_operator_set(&env), Symbol::new(&env, "operator_set"));
     }
 
     // -----------------------------------------------------------------------

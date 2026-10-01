@@ -270,13 +270,14 @@ fn place_bet_increments_then_clear_decrements() {
     let env = Env::default();
     let (_, admin, client, alice) = setup_with_user(&env);
     client.set_account_limits(&admin, &alice, &5u32, &5u32, &5u32);
+    let operator = Address::generate(&env);
 
     client.place_bet(&alice);
     client.place_bet(&alice);
     let state = client.get_account_state(&alice);
     assert_eq!(state.bets, 2);
 
-    client.clear_bet(&alice);
+    client.clear_bet(&operator, &alice);
     let state = client.get_account_state(&alice);
     assert_eq!(state.bets, 1);
 }
@@ -286,6 +287,7 @@ fn place_bet_respects_per_account_cap() {
     let env = Env::default();
     let (_, admin, client, alice) = setup_with_user(&env);
     client.set_account_limits(&admin, &alice, &3u32, &3u32, &3u32);
+    let operator = Address::generate(&env);
 
     client.place_bet(&alice);
     client.place_bet(&alice);
@@ -296,6 +298,7 @@ fn place_bet_respects_per_account_cap() {
     );
     let state = client.get_account_state(&alice);
     assert_eq!(state.bets, 3, "failing call must not increment counter");
+    let _ = operator;
 }
 
 #[test]
@@ -303,6 +306,7 @@ fn open_position_respects_per_account_cap() {
     let env = Env::default();
     let (_, admin, client, alice) = setup_with_user(&env);
     client.set_account_limits(&admin, &alice, &3u32, &2u32, &3u32);
+    let operator = Address::generate(&env);
 
     client.open_position(&alice);
     client.open_position(&alice);
@@ -312,6 +316,7 @@ fn open_position_respects_per_account_cap() {
     );
     let state = client.get_account_state(&alice);
     assert_eq!(state.positions, 2);
+    let _ = operator;
 }
 
 #[test]
@@ -319,6 +324,7 @@ fn subscribe_respects_per_account_cap() {
     let env = Env::default();
     let (_, admin, client, alice) = setup_with_user(&env);
     client.set_account_limits(&admin, &alice, &3u32, &3u32, &2u32);
+    let operator = Address::generate(&env);
 
     client.subscribe(&alice);
     client.subscribe(&alice);
@@ -328,14 +334,16 @@ fn subscribe_respects_per_account_cap() {
     );
     let state = client.get_account_state(&alice);
     assert_eq!(state.subscriptions, 2);
+    let _ = operator;
 }
 
 #[test]
 fn clear_bet_underflow_returns_typed_error() {
     let env = Env::default();
     let (_, _, client, alice) = setup_with_user(&env);
+    let operator = Address::generate(&env);
     assert_eq!(
-        client.try_clear_bet(&alice),
+        client.try_clear_bet(&operator, &alice),
         Err(Ok(YieldLimitError::CounterUnderflow))
     );
 }
@@ -344,8 +352,9 @@ fn clear_bet_underflow_returns_typed_error() {
 fn close_position_underflow_returns_typed_error() {
     let env = Env::default();
     let (_, _, client, alice) = setup_with_user(&env);
+    let operator = Address::generate(&env);
     assert_eq!(
-        client.try_close_position(&alice),
+        client.try_close_position(&operator, &alice),
         Err(Ok(YieldLimitError::CounterUnderflow))
     );
 }
@@ -354,8 +363,9 @@ fn close_position_underflow_returns_typed_error() {
 fn unsubscribe_underflow_returns_typed_error() {
     let env = Env::default();
     let (_, _, client, alice) = setup_with_user(&env);
+    let operator = Address::generate(&env);
     assert_eq!(
-        client.try_unsubscribe(&alice),
+        client.try_unsubscribe(&operator, &alice),
         Err(Ok(YieldLimitError::CounterUnderflow))
     );
 }
@@ -366,6 +376,7 @@ fn state_independent_across_accounts() {
     let (_, admin, client) = setup_admin(&env);
     let alice = Address::generate(&env);
     let bob = Address::generate(&env);
+    let operator = Address::generate(&env);
     client.set_account_limits(&admin, &alice, &2u32, &2u32, &2u32);
     client.set_account_limits(&admin, &bob, &4u32, &4u32, &4u32);
 
@@ -377,6 +388,7 @@ fn state_independent_across_accounts() {
     client.place_bet(&bob);
     assert_eq!(client.get_account_state(&alice).bets, 2);
     assert_eq!(client.get_account_state(&bob).bets, 4);
+    let _ = operator;
 }
 
 #[test]
@@ -384,6 +396,7 @@ fn place_bet_with_cap_zero_rejects() {
     let env = Env::default();
     let (_, admin, client, alice) = setup_with_user(&env);
     client.set_account_limits(&admin, &alice, &0u32, &0u32, &0u32);
+    let operator = Address::generate(&env);
     assert_eq!(
         client.try_place_bet(&alice),
         Err(Ok(YieldLimitError::BetsAtCap))
@@ -396,6 +409,7 @@ fn place_bet_with_cap_zero_rejects() {
         client.try_subscribe(&alice),
         Err(Ok(YieldLimitError::SubscriptionsAtCap))
     );
+    let _ = operator;
 }
 
 // ---------------------------------------------------------------------

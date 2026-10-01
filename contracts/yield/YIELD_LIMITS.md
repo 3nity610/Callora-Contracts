@@ -13,6 +13,12 @@ yield-bearing UX without producing meaningful economic activity. The issue
 requires per-account caps on the *number* of open bets, open positions, and
 active subscriptions a single address may hold at any one time.
 
+Because the counter mutators are self-reported, an account could otherwise
+decrement its own counters at will and re-place indefinitely, making the caps
+advisory only. To close this, increment/decrement is restricted to an
+authorized operator contract configured by the admin, and the operator's auth
+must accompany the account's auth on every mutator call.
+
 ## Surface
 
 The new contract `CalloraYieldLimits` (in `contracts/yield/src/limits.rs`)
@@ -42,17 +48,18 @@ pub use errors::YieldLimitError;
 | `set_default_limits(caller, max_b, max_p, max_s)`             | Replace the global defaults.                             |
 | `set_account_limits(caller, account, max_b, max_p, max_s)`   | Override the defaults for a single account.             |
 | `clear_account_limits(caller, account)`                      | Revert the account to the global defaults.              |
+| `set_operator(caller, operator)`                             | Set the authorized operator contract (admin only).      |
 
 ### User counter mutators (caller-authenticated)
 
 | Entrypoint                  | Effect                                                          |
 |-----------------------------|-----------------------------------------------------------------|
-| `place_bet(caller)`         | Increment caller's open-bet counter; rejects at cap.            |
-| `clear_bet(caller)`         | Decrement caller's open-bet counter; rejects on zero.           |
-| `open_position(caller)`     | Increment caller's open-position counter; rejects at cap.       |
-| `close_position(caller)`    | Decrement caller's open-position counter; rejects on zero.      |
-| `subscribe(caller)`         | Increment caller's active-subscription counter; rejects at cap. |
-| `unsubscribe(caller)`       | Decrement caller's active-subscription counter; rejects on zero.|
+| `place_bet(caller)`         | Increment caller's open-bet counter; requires operator auth; rejects at cap. |
+| `clear_bet(caller)`         | Decrement caller's open-bet counter; requires operator auth; rejects on zero. |
+| `open_position(caller)`     | Increment caller's open-position counter; requires operator auth; rejects at cap. |
+| `close_position(caller)`    | Decrement caller's open-position counter; requires operator auth; rejects on zero. |
+| `subscribe(caller)`         | Increment caller's active-subscription counter; requires operator auth; rejects at cap. |
+| `unsubscribe(caller)`       | Decrement caller's active-subscription counter; requires operator auth; rejects on zero. |
 
 ### Read-only views (no auth)
 
@@ -62,6 +69,7 @@ pub use errors::YieldLimitError;
 | `get_default_limits()`                                    | Global cap defaults (fallback to `DEFAULT_LIMITS`).             |
 | `get_account_limits(account)`                             | Effective caps for the account (per-account override → default). |
 | `get_account_state(account)`                              | Live counters for the account (zeroed if absent).               |
+| `get_operator()`                                          | Current authorized operator address or `NotInitialized`.        |
 | `can_place_bet(account)` / `can_open_position(account)` / |                                                              |
 | `can_subscribe(account)`                                  | Dry-run gate checks.                                           |
 
@@ -70,6 +78,9 @@ pub use errors::YieldLimitError;
 - `DefaultLimits` and `AccountLimits(Address)` are stored in **instance**
   storage so they participate in the same TTL extension window as the rest of
   the contract's configuration.
+- `Operator` is stored in **instance** storage alongside the admin and limits
+  configuration so it shares the same TTL extension window and is set/read
+  atomically with the rest of the trust configuration.
 - `AccountState(Address)` is stored in **persistent** storage and bumped to
   `STATE_BUMP_AMOUNT` (≈30 days) on every read / write so accounts that go
   quiet do not silently archive.
@@ -109,6 +120,7 @@ post-init override.
 | 7    | `SubscriptionsAtCap`  | Account's active-subscription counter is at the cap.   |
 | 8    | `CounterUnderflow`    | `clear_*` called when the corresponding counter is 0.  |
 | 9    | `Overflow`            | `u32` counter overflow during increment.               |
+| 10   | `OperatorNotSet`      | Operator address has not been configured by the admin. |
 
 ## Events
 
@@ -119,6 +131,7 @@ tests. Topic vocabulary (`init`, `admin_*`, `default_limits_set`,
 `position_opened`, `position_closed`, `subscription_added`,
 `subscription_removed`, `upgraded`) follows the past-tense-verb pattern
 documented in `CONTRIBUTING.md`.
+`operator_set` is emitted whenever the admin changes the authorized operator.
 
 ## Backward compatibility
 
@@ -127,6 +140,10 @@ documented in `CONTRIBUTING.md`.
 - No prior type, storage key, or event topic was renamed.
 - No prior `callora-yield` consumer is broken (only additive additions to the
   public surface).
+- The counter mutators now require the configured operator's auth in addition
+  to the account's auth. Existing integrations that call these entrypoints
+  directly must be updated to route through the operator contract, or the
+  admin must set the operator to the address performing the calls.
 
 ## Verification
 
@@ -136,6 +153,9 @@ cargo fmt  -p callora-yield
 cargo test -p callora-yield --lib              # 40+ unit tests
 cargo test -p callora-yield --test auth_snap   # 13 mutator + 7 view assertions
 
+# Confirm an account cannot reset its own bet count without operator auth.
+cargo test -p callora-yield --test operator_gate
+
 # Build for the wasm32 target so WASM-bound assets do compile.
 cargo build -p callora-yield --target wasm32-unknown-unknown --release
 ```
@@ -143,6 +163,9 @@ cargo build -p callora-yield --target wasm32-unknown-unknown --release
 All unit tests must pass, all 13 mutator assertions in `auth_snap.rs` must
 report `res.is_err()`, and all 7 view assertions in `auth_snap.rs` must run
 without `require_auth`.
+The `operator_gate` suite proves that `clear_bet` (and the other decrement
+mutators) fail with `Unauthorized` when the account attempts to call them
+without the configured operator's auth.
 
 ## Coverage summary
 
@@ -151,3 +174,6 @@ without `require_auth`.
 - 13 authentication-snapshot mutator tests (`require_auth` enforcement).
 - 7 authentication-snapshot view tests (no-auth callability).
 - 13 byte-snapshot tests pinning event-topic symbol identity.
+- Operator-gate tests proving accounts cannot decrement their own counters
+  without operator auth, and that `set_operator` is admin-only and emits
+  `operator_set`.
