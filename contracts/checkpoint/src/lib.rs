@@ -57,6 +57,12 @@ pub enum StorageKey {
     /// Instance: cached count of total checkpoints (`u64`), kept in
     /// sync with `NextCheckpointId` for efficient `get_checkpoint_count`.
     CheckpointCount,
+    /// Persistent: ordered list of checkpoint IDs for a given subject [`Address`].
+    ///
+    /// Maintained as an append-only `Vec<u64>` in persistent storage so that
+    /// [`CalloraCheckpoint::get_checkpoints_for_subject`] can return a
+    /// subject's history in creation order without scanning the full range.
+    SubjectIndex(Address),
 }
 
 /// A single immutable audit checkpoint recording a balance snapshot at a point in time.
@@ -177,6 +183,25 @@ impl CalloraCheckpoint {
             .set(&StorageKey::CheckpointCount, &next);
 
         Ok(next)
+    }
+
+    /// Append `checkpoint_id` to the persistent per-subject index for `subject`.
+    ///
+    /// Creates the index list on first use. After writing, the entry's TTL is
+    /// extended to [`BUMP_AMOUNT`] ledgers so the index survives as long as
+    /// individual checkpoint records.
+    fn append_to_subject_index(env: &Env, subject: &Address, checkpoint_id: u64) {
+        let key = StorageKey::SubjectIndex(subject.clone());
+        let mut ids: Vec<u64> = env
+            .storage()
+            .persistent()
+            .get(&key)
+            .unwrap_or_else(|| Vec::new(env));
+        ids.push_back(checkpoint_id);
+        env.storage().persistent().set(&key, &ids);
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, LIFETIME_THRESHOLD, BUMP_AMOUNT);
     }
 
     // -----------------------------------------------------------------------
@@ -362,6 +387,10 @@ impl CalloraCheckpoint {
             .persistent()
             .extend_ttl(&key, LIFETIME_THRESHOLD, BUMP_AMOUNT);
 
+        // Maintain the per-subject index so get_checkpoints_for_subject can
+        // return this subject's history without a full-range scan.
+        Self::append_to_subject_index(&env, &subject, id);
+
         env.events()
             .publish((events::event_checkpoint_created(&env), subject), record);
 
@@ -435,6 +464,9 @@ impl CalloraCheckpoint {
             env.storage()
                 .persistent()
                 .extend_ttl(&key, LIFETIME_THRESHOLD, BUMP_AMOUNT);
+
+            // Maintain the per-subject index for each item.
+            Self::append_to_subject_index(&env, &subject, id);
 
             env.events().publish(
                 (events::event_checkpoint_created(&env), subject.clone()),
@@ -521,6 +553,72 @@ impl CalloraCheckpoint {
 
         let mut result: Vec<CheckpointRecord> = Vec::new(&env);
         for id in start_id..end_id {
+            let key = StorageKey::Checkpoint(id);
+            if let Some(record) = env.storage().persistent().get(&key) {
+                env.storage()
+                    .persistent()
+                    .extend_ttl(&key, LIFETIME_THRESHOLD, BUMP_AMOUNT);
+                result.push_back(record);
+            }
+        }
+
+        Ok(result)
+    }
+
+    /// Return a paginated list of checkpoint records for a specific subject.
+    ///
+    /// The result is ordered by creation order (ascending checkpoint ID).
+    /// Returns an empty [`Vec`] when the subject has no recorded checkpoints.
+    ///
+    /// Reading the subject index bumps its persistent TTL. Every checkpoint
+    /// record returned also has its TTL bumped (buffer #26), consistent with
+    /// [`CalloraCheckpoint::get_checkpoint`] and
+    /// [`CalloraCheckpoint::get_checkpoints_range`].
+    ///
+    /// # Parameters
+    /// * `subject` -- The address whose checkpoint history is requested.
+    /// * `start` -- Zero-based offset into the subject's ID list. Pass `0`
+    ///   to begin from the earliest checkpoint.
+    /// * `limit` -- Maximum number of records to return. Capped at
+    ///   [`MAX_PAGE_SIZE`].
+    ///
+    /// # Errors
+    /// * [`CheckpointError::InvalidPageSize`] -- `limit` is zero.
+    pub fn get_checkpoints_for_subject(
+        env: Env,
+        subject: Address,
+        start: u32,
+        limit: u32,
+    ) -> Result<Vec<CheckpointRecord>, CheckpointError> {
+        if limit == 0 {
+            return Err(CheckpointError::InvalidPageSize);
+        }
+
+        let index_key = StorageKey::SubjectIndex(subject.clone());
+
+        // No index entry means the subject has no checkpoints yet — return empty.
+        let all_ids: Vec<u64> = match env.storage().persistent().get(&index_key) {
+            Some(ids) => ids,
+            None => return Ok(Vec::new(&env)),
+        };
+
+        // Bump the index entry's TTL on every read so it stays alive as long
+        // as the checkpoints it references.
+        env.storage()
+            .persistent()
+            .extend_ttl(&index_key, LIFETIME_THRESHOLD, BUMP_AMOUNT);
+
+        let total = all_ids.len();
+        if start >= total || total == 0 {
+            return Ok(Vec::new(&env));
+        }
+
+        let effective_limit = limit.min(MAX_PAGE_SIZE);
+        let end = (start.saturating_add(effective_limit)).min(total);
+
+        let mut result: Vec<CheckpointRecord> = Vec::new(&env);
+        for idx in start..end {
+            let id = all_ids.get(idx).unwrap();
             let key = StorageKey::Checkpoint(id);
             if let Some(record) = env.storage().persistent().get(&key) {
                 env.storage()
