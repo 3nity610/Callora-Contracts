@@ -313,6 +313,7 @@ dependencies = [
  "callora-distribute",
  "callora-revenue-pool",
  "callora-settlement",
+ "callora-vault",
  "soroban-sdk",
 ]
 
