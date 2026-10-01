@@ -2554,9 +2554,13 @@ pub mod limits;
 pub mod rate_limit;
 pub mod rescue;
 
-// #[cfg(test)]
-// #[path = "../proofs/deduct.rs"]
-// mod deduct_proofs;
+/// Formal verification harnesses (compiled only under `cargo kani`).
+#[cfg(kani)]
+mod kani_proofs;
+
+#[cfg(any(kani, test))]
+#[path = "../proofs/deduct.rs"]
+mod deduct_proofs;
 
 // ---------------------------------------------------------------------------
 // Test modules

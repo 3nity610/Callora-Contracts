@@ -4,6 +4,7 @@ Soroban smart contracts for the Callora API marketplace: prepaid vault (USDC) an
 
 [![CI](https://github.com/CalloraOrg/Callora-Contracts/actions/workflows/ci.yml/badge.svg)](https://github.com/CalloraOrg/Callora-Contracts/actions/workflows/ci.yml)
 [![Coverage](https://github.com/CalloraOrg/Callora-Contracts/actions/workflows/coverage.yml/badge.svg)](https://github.com/CalloraOrg/Callora-Contracts/actions/workflows/coverage.yml)
+[![Kani](https://github.com/CalloraOrg/Callora-Contracts/actions/workflows/kani.yml/badge.svg)](https://github.com/CalloraOrg/Callora-Contracts/actions/workflows/kani.yml)
 
 ## Tech stack
 
@@ -194,6 +195,58 @@ Backend operators setting up a new deployment should follow the step-by-step che
 [`docs/CONTRACT_ADDRESS_CONFIGURATION.md`](docs/CONTRACT_ADDRESS_CONFIGURATION.md).
 It covers deploying and linking the USDC token, settlement contract, and revenue pool,
 plus how to verify them with the vault's individual address view functions.
+
+## Formal Verification (Kani)
+
+The `callora-vault` crate ships bounded model-checking harnesses using [Kani](https://model-checking.github.io/kani/).
+Harnesses are compiled only under `cargo kani` (gated with `#[cfg(kani)]`) and have zero impact on normal builds or `cargo test`.
+
+### What is proved
+
+| Harness | File | Property |
+|---|---|---|
+| `kani_deduct_balance_non_negative` | `src/kani_proofs.rs` | No underflow after a valid `deduct` call |
+| `kani_deduct_strictly_reduces_balance` | `src/kani_proofs.rs` | `deduct` always strictly reduces the balance |
+| `kani_deduct_request_id_transparent` | `src/kani_proofs.rs` | `request_id: u64` has no effect on balance arithmetic |
+| `kani_deposit_no_overflow` | `src/kani_proofs.rs` | `deposit` never overflows `i128` for valid inputs |
+| `kani_deposit_overflow_detected` | `src/kani_proofs.rs` | `checked_add` correctly detects overflow |
+| `kani_max_deduct_enforced` | `src/kani_proofs.rs` | Guard rejects `amount > max_deduct` before touching balance |
+| `kani_batch_deduct_total_no_overflow` | `src/kani_proofs.rs` | `batch_deduct` running-total over `Vec<(i128, u64)>` is sound |
+| `kani_withdraw_balance_non_negative` | `src/kani_proofs.rs` | `withdraw` never underflows |
+| `kani_deduct_conserves_total_supply` | `proofs/deduct.rs` | Successful `deduct` conserves the vault + settlement accounting total |
+| `kani_deduct_request_id_conserves_total` | `proofs/deduct.rs` | Conservation invariant holds across all `request_id: u64` values |
+| `kani_batch_deduct_conserves_total_supply` | `proofs/deduct.rs` | 2-item `batch_deduct` conserves the accounting total |
+
+### Running locally
+
+```bash
+# Install Kani (one-time; ~300 MB)
+cargo install --locked cargo-kani
+
+# Run all vault harnesses
+cargo kani -p callora-vault
+
+# Run a single named harness
+cargo kani -p callora-vault --harness kani_deduct_balance_non_negative
+```
+
+### CI workflow
+
+Harnesses run automatically on every push/PR that touches `contracts/vault/src/kani_proofs.rs`, `contracts/vault/proofs/deduct.rs`, or `contracts/vault/src/lib.rs` via [`.github/workflows/kani.yml`](.github/workflows/kani.yml).
+
+The job is currently `continue-on-error: true` (non-blocking).  Once the harness suite has been stable for two release cycles it will be promoted to a required check.
+
+### Module structure
+
+```
+contracts/vault/
+├── src/
+│   ├── kani_proofs.rs      # #[cfg(kani)] mod proofs — 8 pure arithmetic harnesses
+│   └── lib.rs              # #[cfg(kani)] mod kani_proofs; declaration
+└── proofs/
+    └── deduct.rs           # DeductState model + 3 conservation harnesses + unit tests
+                            # Included as mod deduct_proofs under #[cfg(any(kani, test))]
+```
 
 ## Security Notes
 
