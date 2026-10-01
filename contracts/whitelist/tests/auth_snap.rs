@@ -2,7 +2,7 @@
 
 extern crate std;
 
-use callora_whitelist::{CalloraWhitelist, CalloraWhitelistClient, WhitelistError};
+use callora_whitelist::{CalloraWhitelist, CalloraWhitelistClient};
 use soroban_sdk::testutils::{Address as _, Ledger as _};
 use soroban_sdk::{Address, Env, Symbol};
 
@@ -54,6 +54,20 @@ fn accept_admin_requires_auth() {
     env.set_auths(&[]);
     let res = client.try_accept_admin();
     assert!(res.is_err(), "accept_admin must require auth");
+}
+
+#[test]
+fn cancel_admin_transfer_requires_auth() {
+    let env = Env::default();
+    let (admin, client) = setup(&env);
+
+    env.mock_all_auths();
+    let new_admin = Address::generate(&env);
+    client.set_admin(&admin, &new_admin);
+
+    env.set_auths(&[]);
+    let res = client.try_cancel_admin_transfer(&admin);
+    assert!(res.is_err(), "cancel_admin_transfer must require auth");
 }
 
 #[test]
@@ -192,6 +206,8 @@ fn admin_with_auth_can_call_all_entrypoints() {
     assert!(!client.is_whitelisted(&addr));
 
     let new_admin = Address::generate(&env);
+    client.set_admin(&admin, &new_admin);
+    client.cancel_admin_transfer(&admin);
     client.set_admin(&admin, &new_admin);
     client.accept_admin();
     assert_eq!(client.get_admin().unwrap(), new_admin);

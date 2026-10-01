@@ -147,6 +147,10 @@ impl CalloraWhitelist {
         env.storage()
             .instance()
             .set(&StorageKey::WhitelistPendingAdmin, &new_admin);
+        env.events().publish(
+            (Symbol::new(&env, "admin_nominated"), caller.clone()),
+            new_admin.clone(),
+        );
         Self::bump_instance_ttl(&env);
         Ok(())
     }
@@ -169,6 +173,42 @@ impl CalloraWhitelist {
         env.storage()
             .instance()
             .remove(&StorageKey::WhitelistPendingAdmin);
+        env.events().publish(
+            (Symbol::new(&env, "admin_accepted"), new_admin.clone()),
+            new_admin.clone(),
+        );
+        Self::bump_instance_ttl(&env);
+        Ok(())
+    }
+
+    /// Cancel a pending admin transfer (current admin only).
+    ///
+    /// Removes any pending admin nomination so a stale nomination cannot be
+    /// accepted later. Emits an `admin_cancelled` event.
+    ///
+    /// # Parameters
+    /// - `caller` — Must be the current admin.
+    ///
+    /// # Errors
+    /// - [`WhitelistError::Unauthorized`] if `caller` is not the admin.
+    /// - [`WhitelistError::NotInitialized`] if the contract has not been initialized.
+    /// - [`WhitelistError::NoAdminTransferPending`] if no admin transfer has been initiated.
+    pub fn cancel_admin_transfer(env: Env, caller: Address) -> Result<(), WhitelistError> {
+        Self::require_admin(&env, &caller)?;
+
+        let pending: Address = env
+            .storage()
+            .instance()
+            .get(&StorageKey::WhitelistPendingAdmin)
+            .ok_or(WhitelistError::NoAdminTransferPending)?;
+
+        env.storage()
+            .instance()
+            .remove(&StorageKey::WhitelistPendingAdmin);
+        env.events().publish(
+            (Symbol::new(&env, "admin_cancelled"), caller.clone()),
+            pending,
+        );
         Self::bump_instance_ttl(&env);
         Ok(())
     }
