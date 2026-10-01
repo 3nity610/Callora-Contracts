@@ -3041,6 +3041,160 @@ mod settlement_tests {
         );
     }
 
+    // ── settlement drain queue tests ────────────────────────────────────────
+
+    #[test]
+    fn test_queue_enqueue_and_drain_fifo_order() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = Address::generate(&env);
+        let vault = Address::generate(&env);
+        let addr = env.register(CalloraSettlement, ());
+        let client = CalloraSettlementClient::new(&env, &addr);
+        client.init(&admin, &vault);
+        let token = Address::generate(&env);
+
+        let dev1 = Address::generate(&env);
+        let dev2 = Address::generate(&env);
+        let dev3 = Address::generate(&env);
+
+        client.enqueue_withdrawal(&vault, &dev1, &100i128, &token);
+        client.enqueue_withdrawal(&vault, &dev2, &200i128, &token);
+        client.enqueue_withdrawal(&vault, &dev3, &300i128, &token);
+
+        assert_eq!(client.get_queue_len(), 3);
+
+        let drained = client.drain_queue(&admin, &2u32);
+        assert_eq!(drained.len(), 2);
+        assert_eq!(drained.get(0).unwrap().developer, dev1);
+        assert_eq!(drained.get(0).unwrap().amount, 100i128);
+        assert_eq!(drained.get(1).unwrap().developer, dev2);
+        assert_eq!(drained.get(1).unwrap().amount, 200i128);
+        assert_eq!(client.get_queue_len(), 1);
+    }
+
+    #[test]
+    fn test_queue_partial_drain_preserves_remaining_order() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = Address::generate(&env);
+        let vault = Address::generate(&env);
+        let addr = env.register(CalloraSettlement, ());
+        let client = CalloraSettlementClient::new(&env, &addr);
+        client.init(&admin, &vault);
+        let token = Address::generate(&env);
+
+        let dev1 = Address::generate(&env);
+        let dev2 = Address::generate(&env);
+        let dev3 = Address::generate(&env);
+
+        client.enqueue_withdrawal(&vault, &dev1, &10i128, &token);
+        client.enqueue_withdrawal(&vault, &dev2, &20i128, &token);
+        client.enqueue_withdrawal(&vault, &dev3, &30i128, &token);
+
+        let first = client.drain_queue(&admin, &1u32);
+        assert_eq!(first.len(), 1);
+        assert_eq!(first.get(0).unwrap().developer, dev1);
+        assert_eq!(client.get_queue_len(), 2);
+
+        let rest = client.drain_queue(&admin, &10u32);
+        assert_eq!(rest.len(), 2);
+        assert_eq!(rest.get(0).unwrap().developer, dev2);
+        assert_eq!(rest.get(1).unwrap().developer, dev3);
+        assert_eq!(client.get_queue_len(), 0);
+    }
+
+    #[test]
+    fn test_queue_drain_bounded_per_call() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = Address::generate(&env);
+        let vault = Address::generate(&env);
+        let addr = env.register(CalloraSettlement, ());
+        let client = CalloraSettlementClient::new(&env, &addr);
+        client.init(&admin, &vault);
+        let token = Address::generate(&env);
+
+        for _ in 0..(crate::MAX_QUEUE_DRAIN_PER_CALL + 5) {
+            let dev = Address::generate(&env);
+            client.enqueue_withdrawal(&vault, &dev, &1i128, &token);
+        }
+
+        let drained = client.drain_queue(&admin, &u32::MAX);
+        assert_eq!(drained.len(), crate::MAX_QUEUE_DRAIN_PER_CALL);
+        assert_eq!(
+            client.get_queue_len(),
+            5,
+            "remaining items must stay queued"
+        );
+    }
+
+    #[test]
+    fn test_queue_drain_unauthorized() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = Address::generate(&env);
+        let vault = Address::generate(&env);
+        let addr = env.register(CalloraSettlement, ());
+        let client = CalloraSettlementClient::new(&env, &addr);
+        client.init(&admin, &vault);
+        let token = Address::generate(&env);
+        let dev = Address::generate(&env);
+
+        client.enqueue_withdrawal(&vault, &dev, &1i128, &token);
+
+        let result = client.try_drain_queue(&vault, &1u32);
+        assert!(is_error(result, SettlementError::Unauthorized));
+    }
+
+    #[test]
+    fn test_queue_drain_empty_returns_empty() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = Address::generate(&env);
+        let vault = Address::generate(&env);
+        let addr = env.register(CalloraSettlement, ());
+        let client = CalloraSettlementClient::new(&env, &addr);
+        client.init(&admin, &vault);
+
+        let drained = client.drain_queue(&admin, &10u32);
+        assert_eq!(drained.len(), 0);
+        assert_eq!(client.get_queue_len(), 0);
+    }
+
+    #[test]
+    fn test_queue_enqueue_rejects_zero_amount() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = Address::generate(&env);
+        let vault = Address::generate(&env);
+        let addr = env.register(CalloraSettlement, ());
+        let client = CalloraSettlementClient::new(&env, &addr);
+        client.init(&admin, &vault);
+        let token = Address::generate(&env);
+        let dev = Address::generate(&env);
+
+        let result = client.try_enqueue_withdrawal(&vault, &dev, &0i128, &token);
+        assert!(is_error(result, SettlementError::AmountNotPositive));
+    }
+
+    #[test]
+    fn test_queue_enqueue_unauthorized() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = Address::generate(&env);
+        let vault = Address::generate(&env);
+        let third_party = Address::generate(&env);
+        let addr = env.register(CalloraSettlement, ());
+        let client = CalloraSettlementClient::new(&env, &addr);
+        client.init(&admin, &vault);
+        let token = Address::generate(&env);
+        let dev = Address::generate(&env);
+
+        let result = client.try_enqueue_withdrawal(&third_party, &dev, &1i128, &token);
+        assert!(is_error(result, SettlementError::Unauthorized));
+    }
+
     /// Sorted order: DeveloperIndex stays sorted; cursor pages come out in the
     /// same deterministic order regardless of credit sequence.
     #[test]
