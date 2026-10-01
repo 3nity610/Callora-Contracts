@@ -12,6 +12,12 @@
 /// Maximum number of payment legs allowed in a single batch operation.
 pub const MAX_BATCH_SIZE: u32 = 50;
 
+/// Backwards-compatible aliases for callers that used the limits module.
+/// The canonical TTL policy is defined once at the crate root.
+pub use crate::{
+    INSTANCE_BUMP_AMOUNT as BUMP_AMOUNT, INSTANCE_BUMP_THRESHOLD as LIFETIME_THRESHOLD,
+};
+
 #[cfg(test)]
 mod tests {
     use super::*;
