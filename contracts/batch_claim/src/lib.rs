@@ -435,6 +435,9 @@ impl CalloraBatchClaim {
         // Issue #1044: bound the batch before doing any per-entry work, so an
         // oversized call fails closed and cheaply rather than part-way
         // through a settlement loop.
+        if claimants.is_empty() {
+            return Err(BatchClaimError::BatchEmpty);
+        }
         if claimants.len() > MAX_PENDING_AMOUNTS {
             return Err(BatchClaimError::BatchTooLarge);
         }
@@ -1464,6 +1467,33 @@ mod tests {
             Err(Ok(BatchClaimError::ClaimNotFound)),
             "a full-size batch must be evaluated, not rejected on size"
         );
+    }
+
+    /// An empty batch is rejected with `BatchEmpty` rather than silently
+    /// succeeding with a total of zero.
+    #[test]
+    fn test_empty_batch_rejected() {
+        let env = Env::default();
+        let (_admin, _claimant, client) = setup(&env);
+
+        let batch: Vec<(Address, BytesN<32>)> = Vec::new(&env);
+        let res = client.try_batch_claim(&batch);
+        assert_eq!(res, Err(Ok(BatchClaimError::BatchEmpty)));
+    }
+
+    /// A batch at exactly `MAX_PENDING_AMOUNTS` still succeeds when every
+    /// entry is valid — the empty check must not interfere with the cap.
+    #[test]
+    fn test_batch_at_exact_cap_succeeds_with_valid_entries() {
+        let env = Env::default();
+        let (admin, claimant, client) = setup(&env);
+        let id = make_id(&env, 112);
+        client.add_claim(&admin, &claimant, &10, &id);
+
+        let mut batch = Vec::new(&env);
+        batch.push_back((claimant.clone(), id.clone()));
+        assert_eq!(batch.len(), 1);
+        assert_eq!(client.batch_claim(&batch), 10);
     }
 
     /// The same claimant twice in one batch cannot settle twice: the second
