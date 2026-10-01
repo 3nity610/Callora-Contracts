@@ -2487,6 +2487,77 @@ mod settlement_tests {
             .is_ok());
     }
 
+    #[test]
+    fn test_daily_cap_midnight_rollover() {
+        let env = Env::default();
+        env.mock_all_auths();
+        env.ledger().set_timestamp(86_399);
+        let admin = Address::generate(&env);
+        let vault = Address::generate(&env);
+        let developer = Address::generate(&env);
+        let addr = env.register(CalloraSettlement, ());
+        let client = CalloraSettlementClient::new(&env, &addr);
+        let (usdc_address, _, usdc_admin_client) = create_usdc(&env, &admin);
+
+        client.init(&admin, &vault);
+        client.set_usdc_token(&admin, &usdc_address);
+        client.set_daily_withdraw_cap(&admin, &developer, &1000i128);
+
+        client.receive_payment(&vault, &2000i128, &false, &Some(developer.clone()), &usdc_address);
+        usdc_admin_client.mint(&addr, &2000i128);
+
+        // Withdraw up to cap at t = 86_399
+        assert!(client
+            .try_withdraw_developer_balance(&developer, &1000i128, &None)
+            .is_ok());
+
+        // Attempt another withdrawal within the same day, should fail
+        let result = client.try_withdraw_developer_balance(&developer, &1i128, &None);
+        assert!(is_error(result, SettlementError::DailyWithdrawCapExceeded));
+
+        // Advance to exactly t = 86_400 (midnight)
+        env.ledger().set_timestamp(86_400);
+
+        // Withdraw on new day, should succeed since counter is reset
+        assert!(client
+            .try_withdraw_developer_balance(&developer, &1000i128, &None)
+            .is_ok());
+    }
+
+    #[test]
+    fn test_daily_cap_zero_unlimited_across_rollover() {
+        let env = Env::default();
+        env.mock_all_auths();
+        env.ledger().set_timestamp(86_399);
+        let admin = Address::generate(&env);
+        let vault = Address::generate(&env);
+        let developer = Address::generate(&env);
+        let addr = env.register(CalloraSettlement, ());
+        let client = CalloraSettlementClient::new(&env, &addr);
+        let (usdc_address, _, usdc_admin_client) = create_usdc(&env, &admin);
+
+        client.init(&admin, &vault);
+        client.set_usdc_token(&admin, &usdc_address);
+        // Cap of 0 = unlimited
+        client.set_daily_withdraw_cap(&admin, &developer, &0i128);
+
+        client.receive_payment(&vault, &5000i128, &false, &Some(developer.clone()), &usdc_address);
+        usdc_admin_client.mint(&addr, &5000i128);
+
+        // Unlimited huge withdraw at t = 86_399
+        assert!(client
+            .try_withdraw_developer_balance(&developer, &2500i128, &None)
+            .is_ok());
+
+        // Advance to exactly t = 86_400
+        env.ledger().set_timestamp(86_400);
+
+        // Unlimited huge withdraw at t = 86_400
+        assert!(client
+            .try_withdraw_developer_balance(&developer, &2500i128, &None)
+            .is_ok());
+    }
+
     // ── developer claim window tests ────────────────────────────────────────
 
     #[test]

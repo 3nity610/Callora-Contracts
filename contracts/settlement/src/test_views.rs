@@ -277,3 +277,38 @@ fn test_minimum_balance_aliases_are_exposed_and_persisted() {
     client.set_developer_min_balance(&admin, &dev, &250i128);
     assert_eq!(client.get_minimum_balance(&dev), 250i128);
 }
+
+#[test]
+fn test_get_withdrawal_today_resets_at_rollover_without_write() {
+    use crate::{DailyWithdrawState, StorageKey};
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().set_timestamp(86_399);
+
+    let admin = Address::generate(&env);
+    let vault = Address::generate(&env);
+    let dev = Address::generate(&env);
+    let addr = env.register(CalloraSettlement, ());
+    let client = CalloraSettlementClient::new(&env, &addr);
+    client.init(&admin, &vault);
+
+    // Manually inject state for day 0
+    let state = DailyWithdrawState {
+        day: 0,
+        amount: 500,
+    };
+    env.as_contract(&addr, || {
+        env.storage()
+            .persistent()
+            .set(&StorageKey::WithdrawalToday(dev.clone()), &state);
+    });
+
+    // Check value at 86_399
+    assert_eq!(client.get_withdrawal_today(&dev), 500i128);
+
+    // Advance to day 1
+    env.ledger().set_timestamp(86_400);
+
+    // View reports 0 seamlessly without write
+    assert_eq!(client.get_withdrawal_today(&dev), 0i128);
+}
