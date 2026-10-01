@@ -2689,6 +2689,9 @@ mod test_owner_deduct_fallback;
 #[cfg(test)]
 mod test_timelock;
 
+#[cfg(test)]
+mod test_capabilities;
+
 // #[cfg(test)]
 // mod test_gas_budget;
 // #[cfg(test)]
