@@ -30,6 +30,7 @@ members = [
     "contracts/recipient",
     "contracts/recipient/fuzz",
     "contracts/registry",
+    "contracts/refund",
     "contracts/rescue",
     "contracts/revenue_pool",
     "contracts/revenue_pool/fuzz",
@@ -58,6 +59,7 @@ default-members = [
     "contracts/limits",
     "contracts/migrate",
     "contracts/registry",
+    "contracts/refund",
     "contracts/rescue",
     "contracts/revenue_pool",
     "contracts/settlement",
@@ -93,4 +95,3 @@ debug-assertions = false  # Disable debug assertions in release
 panic = "abort"           # Smaller panic handler (no unwinding)
 codegen-units = 1         # Better optimization (slower compile, smaller binary)
 lto = true                # Link-time optimization across all crates
-
