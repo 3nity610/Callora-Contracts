@@ -35,6 +35,7 @@ pub mod events;
 pub use errors::TopicsError;
 
 use soroban_sdk::{contract, contractimpl, contracttype, Address, Env, String, Symbol};
+use callora_validators::normalize_visible_ascii;
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -131,6 +132,8 @@ impl CalloraTopics {
     /// - [`TopicsError::NotInitialized`] if `init` has not been called.
     /// - [`TopicsError::Unauthorized`] if `caller` is not the admin.
     /// - [`TopicsError::TopicAlreadyExists`] if `name` is already registered.
+    /// - [`TopicsError::InvalidDescription`] if `description` is empty, exceeds
+    ///   256 bytes, contains control characters, or has leading/trailing whitespace.
     pub fn register_topic(
         env: Env,
         caller: Address,
@@ -148,6 +151,13 @@ impl CalloraTopics {
         if env.storage().persistent().has(&key) {
             return Err(TopicsError::TopicAlreadyExists);
         }
+
+        // Reject descriptions that are empty, exceed 256 bytes, contain C0/DEL
+        // control characters, or have leading / trailing whitespace.  This
+        // prevents oversized payloads from inflating storage and event costs
+        // and makes the on-chain description byte-stable visible ASCII.
+        normalize_visible_ascii(&description)
+            .map_err(|_| TopicsError::InvalidDescription)?;
 
         let record = TopicRecord {
             name: name.clone(),

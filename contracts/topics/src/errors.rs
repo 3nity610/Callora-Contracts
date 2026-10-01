@@ -10,6 +10,7 @@ use soroban_sdk::contracterror;
 /// | 4    | TopicAlreadyExists   | Topic with that name is already registered       |
 /// | 5    | TopicNotFound        | No topic with that name exists                   |
 /// | 6    | Overflow             | Arithmetic overflow in topic counter             |
+/// | 7    | InvalidDescription   | Description is empty, too long (> 256 bytes), or contains non-visible-ASCII bytes |
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 #[repr(u32)]
@@ -26,4 +27,9 @@ pub enum TopicsError {
     TopicNotFound = 5,
     /// Arithmetic overflow (code 6).
     Overflow = 6,
+    /// Description is empty, exceeds 256 bytes, contains control characters,
+    /// or has leading / trailing whitespace (code 7).
+    ///
+    /// Validated by [`callora_validators::normalize_visible_ascii`].
+    InvalidDescription = 7,
 }
