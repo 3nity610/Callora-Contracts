@@ -1210,6 +1210,9 @@ mod test_storage_migration;
 extern crate std;
 
 #[cfg(test)]
+mod test_yield_overflow;
+
+#[cfg(test)]
 mod rustdoc_tests {
     #[test]
     fn every_public_fn_in_lib_has_rustdoc() {
