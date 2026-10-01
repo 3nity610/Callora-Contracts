@@ -29,8 +29,8 @@ use soroban_sdk::{Address, BytesN, Env, Symbol};
 use crate::limits::MinBalanceChanged;
 use crate::types::{
     AdminBroadcast, AdminMigrationEvent, BalanceCreditedEvent, DailyWithdrawCapChanged,
-    DepositEvent, DeveloperClaimWindowChanged, DeveloperForceCreditedEvent, DeveloperWithdrawEvent,
-    GlobalPool, PaymentReceivedEvent, UpgradeCancelledEvent, UpgradeProposedEvent,
+    DeductionRecordedEvent, DepositEvent, DeveloperClaimWindowChanged, DeveloperForceCreditedEvent,
+    DeveloperWithdrawEvent, GlobalPool, PaymentReceivedEvent, UpgradeCancelledEvent, UpgradeProposedEvent,
     VaultAcceptedEvent, VaultProposedEvent,
 };
 
@@ -95,6 +95,16 @@ pub fn emit_supported_token_removed(env: &Env, caller: &Address, token: &Address
         ),
         token.clone(),
     );
+}
+
+/// Returns the canonical Symbol for the `deduction_recorded` event topic.
+pub fn event_deduction_recorded(env: &Env) -> Symbol {
+    Symbol::new(env, "deduction_recorded")
+}
+
+/// Emit an accounting-only vault deduction after its replay marker is stored.
+pub fn emit_deduction_recorded(env: &Env, data: DeductionRecordedEvent) {
+    env.events().publish((event_deduction_recorded(env),), data);
 }
 
 /// Returns the Symbol for the `"balance_credited"` event topic.
@@ -790,6 +800,15 @@ mod tests {
     fn test_event_initialized_bytes() {
         let env = Env::default();
         assert_eq!(event_initialized(&env), Symbol::new(&env, "initialized"));
+    }
+
+    #[test]
+    fn test_event_deduction_recorded_bytes() {
+        let env = Env::default();
+        assert_eq!(
+            event_deduction_recorded(&env),
+            Symbol::new(&env, "deduction_recorded")
+        );
     }
 
     #[test]

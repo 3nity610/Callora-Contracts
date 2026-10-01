@@ -55,6 +55,7 @@ use soroban_sdk::contracterror;
 /// | 45   | ZeroWasmHash                 | Proposed WASM hash is all-zero (rejected)            |
 /// | 46   | UpgradeTimelockNotExpired    | Upgrade timelock delay has not yet elapsed           |
 /// | 47   | UnsupportedToken             | Token is not enabled for settlement payments         |
+/// | 48   | DuplicateRequestId           | Deduction request ID has already been recorded       |
 #[contracterror]
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[repr(u32)]
@@ -116,4 +117,6 @@ pub enum SettlementError {
     UpgradeTimelockNotExpired = 46,
     /// Token is not enabled for settlement payments.
     UnsupportedToken = 47,
+    /// Deduction request ID has already been recorded.
+    DuplicateRequestId = 48,
 }

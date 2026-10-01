@@ -139,8 +139,9 @@ Source: [`contracts/settlement/src/events.rs`](../contracts/settlement/src/event
 | 20 | `price_removed`              | `event_price_removed`              | Offering price removed                     |
 | 21 | `supported_token_added` | `event_supported_token_added` | Admin enables a settlement payment token |
 | 22 | `supported_token_removed` | `event_supported_token_removed` | Admin disables future payments in a token |
+| 23 | `deduction_recorded`         | `event_deduction_recorded`         | Vault accounting deduction recorded            |
 
-**Total: 22 topics**
+**Total: 23 topics**
 
 ---
 
@@ -233,7 +234,7 @@ Distribute:   GCONTRACT_DISTRIBUTE...
 `payment_received`, `balance_credited`, `developer_withdraw`,
 `daily_withdraw_cap_changed`, `claim_window_changed`, `vault_proposed`,
 `vault_accepted`, `developer_force_credited`, `admin_migration_proposed`,
-`admin_migration`, `developer_min_balance_changed`, `initialized`
+`admin_migration`, `developer_min_balance_changed`, `initialized`, `deduction_recorded`
 
 **Revenue Pool-only** (not emitted by any other contract):
 `pause_guardian_set`, `pause_guardian_cleared`,
@@ -259,10 +260,10 @@ Distribute:   GCONTRACT_DISTRIBUTE...
 | Contract      | Topics | Unique (not shared) | Shared |
 |---------------|--------|---------------------|--------|
 | vault         | 46     | 38                  | 8      |
-| settlement    | 18     | 12                  | 6      |
+| settlement    | 19     | 13                  | 6      |
 | revenue_pool  | 24     | 12                  | 12     |
 | distribute    | 13     | 2                   | 11     |
-| **Total**     | **101**| **64**              | **37** |
+| **Total**     | **102**| **65**              | **37** |
 
 > Shared count: each unique topic string that appears in more than one
 > contract is counted once per contract it appears in. The shared topic

@@ -1311,6 +1311,30 @@ no events are emitted and state is rolled back.
 
 ---
 
+### `deduction_recorded`
+
+Emitted once after a successful `record_deduction(amount, request_id)` call.
+This records an accounting update only; it does not transfer tokens or credit
+the global pool or a developer balance.
+
+| Index | Location | Type | Description |
+|-------|----------|------|-------------|
+| topic 0 | topics | Symbol | `"deduction_recorded"` |
+| `amount` | data | i128 | Positive amount added to `TotalReceived` |
+| `request_id` | data | u64 | Opaque, unique deduction request identifier |
+
+The payload is `DeductionRecordedEvent` from `contracts/settlement/src/types.rs`.
+Only the configured vault may authorize this entrypoint. Non-positive amounts
+fail with `AmountNotPositive` (4), duplicate IDs with `DuplicateRequestId` (43),
+and cumulative overflow with `PoolOverflow` (7). Failed calls leave accounting
+and request markers unchanged and emit no successful contract event.
+
+Request markers are persistent entries keyed by `DeductionRequest(request_id)`
+and extended using `PERSISTENT_BUMP_THRESHOLD` / `PERSISTENT_BUMP_AMOUNT`
+(50,000 ledgers). Archived persistent entries must be restored rather than
+treated as unused IDs. Markers begin with this upgrade; historical deductions
+made before replay protection was introduced cannot be deduplicated retroactively.
+
 ### `initialized`
 
 Emitted once by `init()` when the settlement contract is first configured.

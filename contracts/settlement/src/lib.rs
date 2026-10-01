@@ -87,13 +87,25 @@ impl CalloraSettlement {
     /// This entrypoint is intended for accounting-only updates and does not
     /// credit any developer or pool balance. The vault must authorize the call.
     ///
+    /// # Validation and events
+    /// Amounts must be positive and each request ID may be recorded only once.
+    /// Request markers use persistent storage with the standard persistent TTL.
+    /// Emits `deduction_recorded` with the amount and request ID on success.
+    ///
     /// # Arithmetic safety
     /// The cumulative total is incremented via `checked_add`. An overflow
     /// panics with [`SettlementError::PoolOverflow`] rather than wrapping
     /// silently.
-    pub fn record_deduction(env: Env, amount: i128, _request_id: u64) {
+    pub fn record_deduction(env: Env, amount: i128, request_id: u64) {
         let vault = Self::get_vault(env.clone()).unwrap();
         vault.require_auth();
+        if amount <= 0 {
+            env.panic_with_error(SettlementError::AmountNotPositive);
+        }
+        let request_key = StorageKey::DeductionRequest(request_id);
+        if env.storage().persistent().has(&request_key) {
+            env.panic_with_error(SettlementError::DuplicateRequestId);
+        }
         let total = env
             .storage()
             .instance()
@@ -105,6 +117,13 @@ impl CalloraSettlement {
         env.storage()
             .instance()
             .set(&StorageKey::TotalReceived, &new_total);
+        env.storage().persistent().set(&request_key, &true);
+        env.storage().persistent().extend_ttl(
+            &request_key,
+            PERSISTENT_BUMP_THRESHOLD,
+            PERSISTENT_BUMP_AMOUNT,
+        );
+        events::emit_deduction_recorded(&env, DeductionRecordedEvent { amount, request_id });
     }
 
     /// Receive payment from vault and credit to pool or developer balance.
@@ -1679,6 +1698,8 @@ mod test_invariant;
 mod test_multi_asset;
 #[cfg(test)]
 mod test_overflow_safe_math;
+#[cfg(test)]
+mod test_record_deduction;
 #[cfg(test)]
 mod test_simulate_claim;
 #[cfg(test)]

@@ -117,6 +117,7 @@ must not be reassigned once released.
 | 45 | `ZeroWasmHash` | Settlement | Proposed WASM hash is all-zero (rejected) |
 | 46 | `UpgradeTimelockNotExpired` | Settlement | Upgrade timelock delay has not yet elapsed |
 | 47 | `UnsupportedToken` | Settlement | Token is not enabled for settlement payments |
+| 48 | `DuplicateRequestId` | Settlement | Deduction request ID has already been recorded |
 
 ## Revenue Pool
 
