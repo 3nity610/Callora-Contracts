@@ -109,6 +109,20 @@ These views exist to *enumerate* which storage entries belong to a category (the
 
 ---
 
+## TTL Thresholds
+
+The Revenue Pool instance TTL uses the following ledger constants (assuming a 5-second ledger close time):
+
+| Constant | Ledgers | Approx duration |
+|---------|---------|------------------|
+| `LEDGERS_PER_DAY` | 17,280 | 1 day |
+| `LIFETIME_THRESHOLD` | 17,280 (`LEDGERS_PER_DAY`) | ~1 day |
+| `BUMP_AMOUNT` | 518,400 (`LEDGERS_PER_DAY * 30`) | 30 days |
+
+The Revenue Pool bumps its instance on every entrypoint, including the read-only `get_pending_emergency_drain` view, so that a quiet period or an incident response never lets the instance archive.
+
+---
+
 ## How to Run Locally
 
 ### 1. Install Node.js Dependencies

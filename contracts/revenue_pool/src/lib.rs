@@ -54,13 +54,21 @@ pub const MAX_BATCH_SIZE: u32 = 50;
 /// Maximum admin broadcast message length in characters.
 pub const MAX_MESSAGE_LEN: u32 = 256;
 
+/// Number of ledgers in a single day, assuming ~5 s close time.
+pub const LEDGERS_PER_DAY: u32 = 17_280;
+
 /// TTL bump constants for instance storage archival risk mitigation.
-/// Soroban archives ledger entries after ~7 days (631 ledgers) of inactivity.
 ///
-/// - `BUMP_AMOUNT`: extend TTL by 10 000 ledgers (≈16 days)
-/// - `LIFETIME_THRESHOLD`: minimum TTL before triggering a bump (≈1.5 days)
-pub const BUMP_AMOUNT: u32 = 10_000;
-pub const LIFETIME_THRESHOLD: u32 = 1_000;
+/// The revenue pool holds critical operational state (admin, USDC address,
+/// pause flags, pending drain). If the instance entry archives, every call
+/// fails until an explicit restore, which can stall payouts during quiet
+/// periods or incidents. We therefore keep the instance alive for at least
+/// 30 days after any call, matching the vault and settlement contracts.
+///
+/// - `BUMP_AMOUNT`: extend TTL by 30 days of ledgers
+/// - `LIFETIME_THRESHOLD`: minimum TTL before triggering a bump (1 day)
+pub const BUMP_AMOUNT: u32 = LEDGERS_PER_DAY * 30;
+pub const LIFETIME_THRESHOLD: u32 = LEDGERS_PER_DAY;
 
 // ---------------------------------------------------------------------------
 // Auxiliary contract-types
@@ -1134,6 +1142,7 @@ impl RevenuePool {
     /// Off-chain monitors and the admin can poll this to verify or cancel a
     /// pending drain before the timelock expires.
     pub fn get_pending_emergency_drain(env: Env) -> Option<PendingEmergencyDrain> {
+        Self::bump_instance_ttl(&env);
         env.storage()
             .instance()
             .get(&Symbol::new(&env, EMERGENCY_DRAIN_KEY))
