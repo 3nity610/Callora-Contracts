@@ -11,19 +11,10 @@
 //! | `check_and_record_upgrade`| `upgrade_recorded` | `(topic, caller)`               | `recorded_timestamp`              |
 //! | `set_cooldown`            | `cooldown_set`     | `(topic, caller)`               | `new_cooldown_secs`               |
 
-use soroban_sdk::{contracterror, Address, Env, Symbol};
+use soroban_sdk::{Address, Env, Symbol};
 
+use crate::errors::UpgradeError;
 use crate::events;
-
-#[contracterror]
-#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
-#[repr(u32)]
-pub enum UpgradeError {
-    /// The cooldown period for upgrades has not yet elapsed.
-    CooldownNotElapsed = 1,
-    /// Arithmetic overflow.
-    Overflow = 2,
-}
 
 const LAST_UPGRADE_TIME_KEY: &str = "last_upg_tm";
 const UPGRADE_COOLDOWN_KEY: &str = "upg_cooldown";

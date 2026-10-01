@@ -23,7 +23,8 @@
 
 extern crate std;
 
-use callora_upgrade::admin::{self, UpgradeError, DEFAULT_COOLDOWN_SECONDS};
+use callora_upgrade::admin::{self, DEFAULT_COOLDOWN_SECONDS};
+use callora_upgrade::errors::UpgradeError;
 use soroban_sdk::testutils::{Address as _, Ledger as _};
 use soroban_sdk::{contract, contractimpl, Address, Env, Symbol};
 
