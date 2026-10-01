@@ -105,9 +105,10 @@ pub fn event_batch_distribute_completed(env: &Env) -> Symbol {
     Symbol::new(env, "batch_distribute_completed")
 }
 
-/// Returns the Symbol for the canonical event version marker used by Callora.
+/// Returns the canonical event version marker. Symbols require underscores,
+/// so the schema uses `callora_v1` rather than the invalid `callora.v1`.
 pub fn event_version_v1(env: &Env) -> Symbol {
-    Symbol::new(env, "callora.v1")
+    Symbol::new(env, "callora_v1")
 }
 
 #[cfg(test)]
