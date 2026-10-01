@@ -46,7 +46,23 @@ pub enum StorageKey {
     Vault,
     PendingAdmin,
     PendingVault,
+    /// Legacy flat developer index in instance storage — kept so the
+    /// index-to-pages migration can read and drain it.  Do **not** write
+    /// new entries here; new registrations go via [`StorageKey::IndexPage`].
     DeveloperIndex,
+    /// Persistent per-developer membership flag (`bool`).
+    ///
+    /// Set to `true` the first time a developer is credited.  Used as an O(1)
+    /// duplicate guard so `sorted_insert` no longer scans the whole index.
+    DeveloperMember(Address),
+    /// One page of the developer index stored in **persistent** storage.
+    ///
+    /// Key: zero-based page number.  Each page holds up to
+    /// [`INDEX_PAGE_SIZE`] addresses in ascending order by address bytes.
+    IndexPage(u32),
+    /// Total number of allocated index pages (stored in instance storage as
+    /// a single `u32`).  Replaces the unbounded `DeveloperIndex` vector.
+    IndexPageCount,
     /// Legacy single-token balance — kept for V1 → V2 migration reads only.
     /// Do **not** use for new writes; new per-token credits go to
     /// [`StorageKey::DeveloperBalance`].

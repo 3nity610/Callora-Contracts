@@ -290,6 +290,112 @@ pub fn migrate_single_developer(
     Ok(())
 }
 
+// ─── Index-to-pages migration ─────────────────────────────────────────────────
+
+/// Migrate the legacy flat `DeveloperIndex` (instance storage `Vec<Address>`)
+/// to the new paged persistent index (`IndexPage(u32)` + `DeveloperMember`).
+///
+/// ## What this does
+///
+/// 1. Reads `StorageKey::DeveloperIndex` from instance storage (the old
+///    unbounded `Vec<Address>`).
+/// 2. For each address, calls [`CalloraSettlement::index_insert`] which:
+///    - Sets `StorageKey::DeveloperMember(addr)` in persistent storage.
+///    - Appends the address to the appropriate `StorageKey::IndexPage(n)`.
+///    - Updates `StorageKey::IndexPageCount` in instance storage.
+/// 3. Removes `StorageKey::DeveloperIndex` from instance storage.
+///
+/// ## Resumability
+///
+/// The function uses `DeveloperMember` as a per-address idempotency guard.
+/// If the migration is interrupted mid-way and re-run, already-migrated
+/// addresses are skipped in O(1).  Partial progress is therefore safe.
+///
+/// ## Idempotency
+///
+/// Once `StorageKey::DeveloperIndex` is absent (removed on completion),
+/// subsequent calls are a cheap no-op: no pages exist to iterate, and
+/// `index_insert` guards against double-registration.
+///
+/// ## Batch API
+///
+/// For large deployments process `batch_size` addresses per call and pass
+/// the returned `next_offset` back in until `is_complete == true`.
+///
+/// ```text
+/// let mut offset = 0u32;
+/// loop {
+///     let (next, done) = client.migrate_index_to_pages(&admin, &offset, &50u32);
+///     if done { break; }
+///     offset = next;
+/// }
+/// ```
+///
+/// ## Auth
+///
+/// Admin signature required.
+pub fn migrate_index_to_pages(
+    env: &Env,
+    caller: &Address,
+    offset: u32,
+    batch_size: u32,
+) -> (u32, bool) {
+    caller.require_auth();
+    require_admin(env, caller);
+
+    let inst = env.storage().instance();
+
+    // If the old key is gone the migration is already complete.
+    if !inst.has(&StorageKey::DeveloperIndex) {
+        return (0, true);
+    }
+
+    let index: Vec<Address> = inst
+        .get(&StorageKey::DeveloperIndex)
+        .unwrap_or_else(|| Vec::new(env));
+
+    let total = index.len();
+
+    // Empty old index — remove and mark done immediately.
+    if total == 0 {
+        inst.remove(&StorageKey::DeveloperIndex);
+        env.events().publish(
+            (Symbol::new(env, "mig_idx_pages_done"),),
+            0u32,
+        );
+        return (0, true);
+    }
+
+    let effective = if batch_size == 0 {
+        1u32
+    } else {
+        batch_size.min(MAX_BATCH_SIZE)
+    };
+    let end = offset.saturating_add(effective).min(total);
+
+    let mut i = 0u32;
+    for addr in index.iter() {
+        if i >= end {
+            break;
+        }
+        if i >= offset {
+            crate::CalloraSettlement::index_insert(env, addr);
+        }
+        i = i.saturating_add(1);
+    }
+
+    let done = end >= total;
+    if done {
+        inst.remove(&StorageKey::DeveloperIndex);
+        env.events().publish(
+            (Symbol::new(env, "mig_idx_pages_done"),),
+            total,
+        );
+    }
+
+    (end, done)
+}
+
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
