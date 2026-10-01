@@ -1,4 +1,4 @@
-﻿# Callora Contracts
+# Callora Contracts
 
 Soroban smart contracts for the Callora API marketplace: prepaid vault (USDC) and balance deduction for pay-per-call settlement.
 
@@ -20,7 +20,7 @@ A minimal set of commands to build, test, and produce release WASM for the Sorob
 ```bash
 # 1. Format & lint (fails on any warning)
 cargo fmt --all -- --check
-cargo clippy --all-targets --all-features -- -D warnings
+cargo clippy --all-targets --all-features - -D warnings
 
 # 2. Build and run the full test suite
 cargo build
@@ -105,14 +105,14 @@ sequenceDiagram
 
    ```bash
    cargo fmt --all
-   cargo clippy --all-targets --all-features -- -D warnings
+   cargo clippy --all-targets --all-features - -D warnings
    cargo build
    cargo test --workspace
    ```
 
 3. **Build WASM:**
 
-   ```bash
+   ``bash
    # Build all publishable contract crates and verify their release WASM sizes
    ./scripts/check-wasm-size.sh
 
@@ -122,7 +122,7 @@ sequenceDiagram
 
 ## Development
 
-Use one branch per issue or feature. Run `cargo fmt --all`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test --workspace`, and `./scripts/check-wasm-size.sh` before pushing so every publishable contract stays within Soroban's WASM size limit.
+Use one branch per issue or feature. Run `cargo fmt --all`, `cargo clippy --all-targets --all-features - -D warnings`, `cargo test --workspace`, and `./scripts/check-wasm-size.sh` before pushing so every publishable contract stays within Soroban's WASM size limit.
 
 ### Test coverage
 
@@ -137,25 +137,21 @@ The project enforces a **minimum of 95% line coverage** on every push via GitHub
 
 ```
 callora-contracts/
-â”œâ”€â”€ .github/workflows/
-â”‚   â”œâ”€â”€ ci.yml              # CI: workspace fmt gate, clippy, test, WASM build
-â”‚   â””â”€â”€ coverage.yml        # CI: enforces 95% coverage on every push
-â”œâ”€â”€ contracts/
-â”‚   â”œâ”€â”€ vault/              # Primary storage and metering
-â”‚   â”œâ”€â”€ revenue_pool/       # Simple revenue distribution
-â”‚   â””â”€â”€ settlement/         # Advanced balance tracking
-â”œâ”€â”€ scripts/
-â”‚   â”œâ”€â”€ coverage.sh         # Local coverage runner
-â”‚   â””â”€â”€ check-wasm-size.sh  # WASM size verification
-â”œâ”€â”€ docs/
-â”‚   â”œâ”€â”€ interfaces/                        # JSON contract interface summaries
-â”‚   â”œâ”€â”€ ACCESS_CONTROL.md                  # Role-based access control overview
-â”‚   â””â”€â”€ CONTRACT_ADDRESS_CONFIGURATION.md  # Operator guide: configure contract addresses
-â”œâ”€â”€ BENCHMARKS.md           # Gas/cost notes
-â”œâ”€â”€ EVENT_SCHEMA.md         # Event topics and payloads
-â”œâ”€â”€ UPGRADE.md              # Upgrade and migration path
-â”œâ”€â”€ SECURITY.md             # Security checklist
-â””â”€â”€ tarpaulin.toml          # cargo-tarpaulin configuration
+├── .github/workflows/
+│   ├── ci.yml              # CI: workspace fmt gate, clippy, test, WASM build
+│   └── coverage.yml        # CI: enforces 95% coverage on every push
+├── contracts/
+│   ├── vault/              # Primary storage and metering
+│   ├── revenue_pool/       # Simple revenue distribution
+│   └── settlement/         # Advanced balance tracking
+├── scripts/
+│   ├── coverage.sh         # Local coverage runner
+│   └── check-wasm-size.sh  # WASM size verification
+├── docs/
+│   ├── interfaces/                        # JSON contract interface summaries│   ├── ACCESS_CONTROL.md                  # Role-based access control overview│   └── CONTRACT_ADDRESS_CONFIGURATION.md  # Operator guide: configure contract addresses├── BENCHMARKS.md           # Gas/cost notes├── EVENT_SCHEMA.md         # Event topics and payloads
+├── UPGRADE.md              # Upgrade and migration path
+├── SECURITY.md             # Security checklist
+└── tarpaulin.toml          # cargo-tarpaulin configuration
 ```
 
 ## Contract interface summaries
@@ -182,10 +178,10 @@ plus how to verify all addresses with the `get_contract_addresses()` view functi
 - **Checked arithmetic**: All balance mutations use `checked_add` / `checked_sub` with explicit panics.
 - **Input validation**: `amount > 0` enforced on all deposits and deductions.
 - **Overflow checks**: Enabled in both dev and release profiles (`Cargo.toml`).
-- **Role-Based Access**: Documented in [docs/ACCESS_CONTROL.md](docs/ACCESS_CONTROL.md).
+- \*\*Role-Based Access\*\**: Documented in [docs/ACCESS_CONTROL.md](docs/ACCESS_CONTROL.md).
 - **Revenue pool admin audit trail**: `callora-revenue-pool::set_admin` now emits `admin_changed` with `(old_admin, new_admin)` before transfer nomination.
 - **Dedup hardening**: Duplicate `get_max_deduct` declaration removed in `callora-vault`; allowed depositor duplicate-path test now asserts list cardinality.
-- **Emergency drain (Multisig + timelock)**: `callora-revenue-pool` now exposes `propose_emergency_drain`, `execute_emergency_drain`, `cancel_emergency_drain`, and `get_pending_emergency_drain`. A proposal stores a `PendingEmergencyDrain` snapshot; execution is gated behind a 24-hour timelock (`EMERGENCY_DRAIN_TIMELOCK_SECONDS = 86 400`). When the admin is a Stellar multisig account, `require_auth` enforces the native multi-signature threshold automatically.
+- \*\*Emergency drain (Multisig + timelock)\*\*: `callora-revenue-pool` now exposes `propose_emergency_drain`, `execute_emergency_drain`, `cancel_emergency_drain`, and `get_pending_emergency_drain`. A proposal stores a `PendingEmergencyDrain` snapshot; execution is gated behind a 24-hour timelock (`EMERGENCY_DRAIN_TIMECLOCK_SECONDS = 86 400`). When the admin is a Stellar multisig account, `require_auth` enforces the native multi-signature threshold automatically.
 
 See [SECURITY.md](SECURITY.md) for the full Vault Security Checklist and audit recommendations.
 
