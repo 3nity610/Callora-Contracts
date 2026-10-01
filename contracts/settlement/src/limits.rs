@@ -73,8 +73,8 @@ pub fn set_developer_min_balance(
     );
     env.storage().persistent().extend_ttl(
         &StorageKey::DeveloperMinBalance(developer.clone()),
-        50_000,
-        50_000,
+        PERSISTENT_BUMP_THRESHOLD,
+        PERSISTENT_BUMP_AMOUNT,
     );
 
     events::emit_developer_min_balance_changed(

@@ -6,11 +6,30 @@ pub const INSTANCE_BUMP_THRESHOLD: u32 = 17_280 * 30;
 /// Number of ledgers to extend instance storage TTL by (~60 days).
 pub const INSTANCE_BUMP_AMOUNT: u32 = 17_280 * 60;
 
-/// Minimum threshold of remaining ledgers before persistent storage TTL is extended.
-pub const PERSISTENT_BUMP_THRESHOLD: u32 = 50_000;
+/// Ledgers per day at the ~5 s target close time.
+pub const LEDGERS_PER_DAY: u32 = 17_280;
 
-/// Number of ledgers to extend persistent storage TTL by.
-pub const PERSISTENT_BUMP_AMOUNT: u32 = 50_000;
+/// Remaining-TTL threshold (~30 days) below which a persistent entry is
+/// re-extended on access/write (#1131).
+///
+/// Kept strictly below [`PERSISTENT_BUMP_AMOUNT`]: with the previous
+/// `threshold == amount == 50_000`, every single write paid for a TTL
+/// extension. Now an entry is only re-extended once it has aged past
+/// ~90 days of its ~120-day lifetime.
+pub const PERSISTENT_BUMP_THRESHOLD: u32 = LEDGERS_PER_DAY * 30;
+
+/// Persistent-entry lifetime (~120 days) applied on every extension (#1131).
+///
+/// The old value, `50_000` ledgers, was ~2.9 days, not the "1 year" the
+/// code comments claimed — developer balances, caps, claim windows and
+/// replay high-water marks could archive after a long weekend of
+/// inactivity. One year (~6.3M ledgers) is above the network's
+/// `max_entry_ttl` (~180 days on pubnet), so extending that far would be
+/// rejected; ~120 days stays safely under that cap while outliving any
+/// realistic idle period. Every settlement persistent key family —
+/// balances, HWM, caps, claim windows, minimum balances, pending
+/// migrations, price-registry write ledgers — uses this pair.
+pub const PERSISTENT_BUMP_AMOUNT: u32 = LEDGERS_PER_DAY * 120;
 
 /// Persistent storage keys for settlement contract.
 ///

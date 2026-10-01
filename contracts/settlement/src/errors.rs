@@ -56,6 +56,8 @@ use soroban_sdk::contracterror;
 /// | 46   | UpgradeTimelockNotExpired    | Upgrade timelock delay has not yet elapsed           |
 /// | 47   | UnsupportedToken             | Token is not enabled for settlement payments         |
 /// | 48   | DuplicateRequestId           | Deduction request ID has already been recorded       |
+/// | 49   | LengthMismatch               | Paired batch vectors have different lengths          |
+/// | 50   | InvalidCursor                | Batch cursor is past the end or the limit is zero    |
 #[contracterror]
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[repr(u32)]
@@ -119,4 +121,8 @@ pub enum SettlementError {
     UnsupportedToken = 47,
     /// Deduction request ID has already been recorded.
     DuplicateRequestId = 48,
+    /// #1135: `developers.len() != amounts.len()` in a paired batch.
+    LengthMismatch = 49,
+    /// #1135: `cursor > developers.len()` or `limit == 0`.
+    InvalidCursor = 50,
 }

@@ -149,7 +149,11 @@ fn update_last_write_ledger(env: &Env, admin: &Address) {
     let current_ledger = env.ledger().sequence();
     let key = StorageKey::PriceRegistryLastWrite(admin.clone());
     env.storage().persistent().set(&key, &current_ledger);
-    env.storage().persistent().extend_ttl(&key, 50_000, 50_000);
+    env.storage().persistent().extend_ttl(
+        &key,
+        crate::types::PERSISTENT_BUMP_THRESHOLD,
+        crate::types::PERSISTENT_BUMP_AMOUNT,
+    );
 }
 
 #[cfg(test)]

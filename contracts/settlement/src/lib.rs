@@ -216,10 +216,13 @@ impl CalloraSettlement {
             // Write to persistent storage with TTL extension
             env.storage().persistent().set(&balance_key, &new_balance);
 
-            // Extend TTL for the developer's balance entry (persistent storage live for 1 year)
-            env.storage()
-                .persistent()
-                .extend_ttl(&balance_key, 50000, 50000);
+            // Keep the developer balance alive for ~120 days (PERSISTENT_BUMP_AMOUNT;
+            // the old "1 year" comment was wrong — 50_000 ledgers is ~2.9 days, #1131).
+            env.storage().persistent().extend_ttl(
+                &balance_key,
+                PERSISTENT_BUMP_THRESHOLD,
+                PERSISTENT_BUMP_AMOUNT,
+            );
 
             // Add developer to index in sorted order if not already present
             let mut index: Vec<Address> = inst
@@ -330,8 +333,8 @@ impl CalloraSettlement {
             );
             env.storage().persistent().extend_ttl(
                 &StorageKey::DeveloperBalance(dev.clone(), token.clone()),
-                50000,
-                50000,
+                PERSISTENT_BUMP_THRESHOLD,
+                PERSISTENT_BUMP_AMOUNT,
             );
             // Add to index in sorted order if not already present
             let mut index: Vec<Address> = inst
@@ -587,6 +590,22 @@ impl CalloraSettlement {
         to: Option<Address>,
     ) -> Result<(), SettlementError> {
         developer.require_auth();
+        Self::withdraw_developer_balance_inner(&env, developer, amount, to)
+    }
+
+    /// Body of [`withdraw_developer_balance`] after authorization (#1135).
+    ///
+    /// Shared by the single and batch withdrawal entrypoints so both enforce
+    /// exactly the same checks (freeze, amount, claim window, balance,
+    /// minimum balance, daily cap, contract liquidity), the same CEI order
+    /// and the same events. Callers must have authorized `developer` first.
+    fn withdraw_developer_balance_inner(
+        env: &Env,
+        developer: Address,
+        amount: i128,
+        to: Option<Address>,
+    ) -> Result<(), SettlementError> {
+        let env = env.clone();
         let sim = Self::validate_claim(&env, &developer, amount, to)?;
         Self::bump_claim_storage_ttl(&env, &developer);
 
@@ -601,9 +620,11 @@ impl CalloraSettlement {
         env.storage()
             .persistent()
             .set(&balance_key, &sim.remaining_balance);
-        env.storage()
-            .persistent()
-            .extend_ttl(&balance_key, 50000, 50000);
+        env.storage().persistent().extend_ttl(
+            &balance_key,
+            PERSISTENT_BUMP_THRESHOLD,
+            PERSISTENT_BUMP_AMOUNT,
+        );
 
         let today = env.ledger().timestamp() / 86400;
         let today_key = StorageKey::WithdrawalToday(sim.developer.clone());
@@ -614,9 +635,11 @@ impl CalloraSettlement {
                 amount: sim.withdrawn_today_after,
             },
         );
-        env.storage()
-            .persistent()
-            .extend_ttl(&today_key, 50000, 50000);
+        env.storage().persistent().extend_ttl(
+            &today_key,
+            PERSISTENT_BUMP_THRESHOLD,
+            PERSISTENT_BUMP_AMOUNT,
+        );
 
         // --- INTERACTION (external token transfer happens last) ---
         usdc.transfer(&contract_address, &sim.recipient, &sim.amount);
@@ -817,9 +840,11 @@ impl CalloraSettlement {
         env.storage()
             .persistent()
             .set(&window_key, &DeveloperClaimWindow { start_ts, end_ts });
-        env.storage()
-            .persistent()
-            .extend_ttl(&window_key, 50000, 50000);
+        env.storage().persistent().extend_ttl(
+            &window_key,
+            PERSISTENT_BUMP_THRESHOLD,
+            PERSISTENT_BUMP_AMOUNT,
+        );
 
         events::emit_developer_claim_window_changed(
             &env,
@@ -938,9 +963,11 @@ impl CalloraSettlement {
         }
         let cap_key = StorageKey::DailyWithdrawCap(developer.clone());
         env.storage().persistent().set(&cap_key, &cap);
-        env.storage()
-            .persistent()
-            .extend_ttl(&cap_key, 50000, 50000);
+        env.storage().persistent().extend_ttl(
+            &cap_key,
+            PERSISTENT_BUMP_THRESHOLD,
+            PERSISTENT_BUMP_AMOUNT,
+        );
 
         events::emit_daily_withdraw_cap_changed(
             &env,
@@ -1049,9 +1076,11 @@ impl CalloraSettlement {
             .unwrap_or_else(|| env.panic_with_error(SettlementError::DeveloperOverflow));
 
         env.storage().persistent().set(&balance_key, &new_balance);
-        env.storage()
-            .persistent()
-            .extend_ttl(&balance_key, 50000, 50000);
+        env.storage().persistent().extend_ttl(
+            &balance_key,
+            PERSISTENT_BUMP_THRESHOLD,
+            PERSISTENT_BUMP_AMOUNT,
+        );
 
         let inst = env.storage().instance();
         let mut index: Vec<Address> = inst
@@ -1532,27 +1561,66 @@ impl CalloraSettlement {
         migrate::storage_version(&env)
     }
 
-    /// Placeholder batch-withdraw entrypoint for cursor-based withdrawals.
+    /// Cursor-based batch developer withdrawal (#1135).
     ///
-    /// The current implementation validates that the developer and amount
-    /// vectors have the same length and returns an immediately-complete
-    /// `(cursor, is_complete)` tuple. It is retained as a public entrypoint for
-    /// interface compatibility and is not yet implemented.
+    /// Processes `developers[cursor .. min(cursor + limit, len)]`, withdrawing
+    /// `amounts[i]` from each developer's balance to that developer's own
+    /// address, and returns `(next_cursor, done)`. Passing `next_cursor` back
+    /// resumes exactly where this call stopped; `done` is `true` once
+    /// `next_cursor == developers.len()`.
+    ///
+    /// # Authorization
+    /// Every developer in the processed window must authorize the call
+    /// (`developer.require_auth()`), exactly as for
+    /// [`withdraw_developer_balance`] — an operator can batch payouts but can
+    /// never move a developer's funds without that developer's signature.
+    /// Developers outside the window are neither authorized nor touched.
+    ///
+    /// # Atomicity
+    /// Each item reuses the single-withdrawal internals. If any item in the
+    /// window fails (frozen, closed claim window, insufficient balance, cap,
+    /// liquidity…), the error is returned and Soroban rolls back the whole
+    /// invocation, so a window is applied all-or-nothing and the caller can
+    /// retry the same cursor after fixing the offending item.
+    ///
+    /// # Errors
+    /// - `LengthMismatch` if `developers.len() != amounts.len()`.
+    /// - `BatchEmpty` if `developers` is empty.
+    /// - `BatchTooLarge` if `developers.len() > MAX_BATCH_SIZE`.
+    /// - `InvalidCursor` if `cursor > developers.len()` or `limit == 0`.
+    /// - Any error of [`withdraw_developer_balance`] for an item in the window.
+    ///
+    /// `limit` is capped at [`MAX_BATCH_SIZE`].
     pub fn batch_withdraw_balance_cursor(
-        _env: Env,
+        env: Env,
         developers: Vec<Address>,
         amounts: Vec<i128>,
-        _cursor: u32,
-        _limit: u32,
+        cursor: u32,
+        limit: u32,
     ) -> Result<(u32, bool), SettlementError> {
         let count = developers.len();
         if count != amounts.len() {
-            return Err(SettlementError::AmountNotPositive);
+            return Err(SettlementError::LengthMismatch);
+        }
+        if count == 0 {
+            return Err(SettlementError::BatchEmpty);
         }
         if count > MAX_BATCH_SIZE {
             return Err(SettlementError::BatchTooLarge);
         }
-        Ok((0, true))
+        if cursor > count || limit == 0 {
+            return Err(SettlementError::InvalidCursor);
+        }
+
+        let end = cursor.saturating_add(limit.min(MAX_BATCH_SIZE)).min(count);
+        for i in cursor..end {
+            let developer = developers.get_unchecked(i);
+            let amount = amounts.get_unchecked(i);
+            developer.require_auth();
+            Self::withdraw_developer_balance_inner(&env, developer, amount, None)?;
+        }
+
+        Ok((end, end == count))
     }
 
     /// Execute a batch of settlement operations and return one outcome per input.
@@ -1649,7 +1717,11 @@ impl CalloraSettlement {
         let key = StorageKey::SupportedToken(token.clone());
         if !env.storage().persistent().has(&key) {
             env.storage().persistent().set(&key, &true);
-            env.storage().persistent().extend_ttl(&key, 50_000, 50_000);
+            env.storage().persistent().extend_ttl(
+                &key,
+                PERSISTENT_BUMP_THRESHOLD,
+                PERSISTENT_BUMP_AMOUNT,
+            );
             events::emit_supported_token_added(env, caller, token);
         }
     }
@@ -1685,6 +1757,9 @@ mod test_freeze;
 #[cfg(test)]
 mod test_reentrancy;
 
+/// #1135: cursor-based batch developer withdrawals.
+#[cfg(test)]
+mod test_batch_withdraw;
 #[cfg(test)]
 // Legacy suites targeting the pre-nonce payment API are intentionally not
 // compiled; current authorization behavior is covered by contracts/tests.

@@ -118,6 +118,8 @@ must not be reassigned once released.
 | 46 | `UpgradeTimelockNotExpired` | Settlement | Upgrade timelock delay has not yet elapsed |
 | 47 | `UnsupportedToken` | Settlement | Token is not enabled for settlement payments |
 | 48 | `DuplicateRequestId` | Settlement | Deduction request ID has already been recorded |
+| 49 | `LengthMismatch` | Settlement | Paired batch vectors have different lengths |
+| 50 | `InvalidCursor` | Settlement | Batch cursor is past the end or the limit is zero |
 
 ## Revenue Pool
 

@@ -58,7 +58,9 @@ pub(crate) fn get_pending_migration(
 pub(crate) fn set_pending_migration(env: &Env, migration: &PendingDeveloperMigration) {
     let key = StorageKey::PendingDeveloperMigration(migration.from.clone());
     env.storage().persistent().set(&key, migration);
-    env.storage().persistent().extend_ttl(&key, 50_000, 50_000);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PERSISTENT_BUMP_THRESHOLD, PERSISTENT_BUMP_AMOUNT);
 }
 
 /// Consume a successfully executed proposal to make replay impossible.

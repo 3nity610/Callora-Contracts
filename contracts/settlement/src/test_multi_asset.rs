@@ -1,6 +1,9 @@
 extern crate std;
 
-use crate::{CalloraSettlement, CalloraSettlementClient, StorageKey};
+use crate::{
+    CalloraSettlement, CalloraSettlementClient, StorageKey, PERSISTENT_BUMP_AMOUNT,
+    PERSISTENT_BUMP_THRESHOLD,
+};
 use soroban_sdk::testutils::{Address as _, Ledger as _};
 use soroban_sdk::token as token_mod;
 use soroban_sdk::{Address, Env};
@@ -220,9 +223,11 @@ fn test_migrate_developer_balance() {
     env.as_contract(&addr, || {
         let legacy_key = StorageKey::DeveloperBalanceV1(developer.clone());
         env.storage().persistent().set(&legacy_key, &999i128);
-        env.storage()
-            .persistent()
-            .extend_ttl(&legacy_key, 50000, 50000);
+        env.storage().persistent().extend_ttl(
+            &legacy_key,
+            PERSISTENT_BUMP_THRESHOLD,
+            PERSISTENT_BUMP_AMOUNT,
+        );
     });
 
     // Before migration, new per-token read returns 0
@@ -277,8 +282,8 @@ fn test_migrate_developer_balance_idempotent() {
             .set(&StorageKey::DeveloperBalanceV1(developer.clone()), &555i128);
         env.storage().persistent().extend_ttl(
             &StorageKey::DeveloperBalanceV1(developer.clone()),
-            50000,
-            50000,
+            PERSISTENT_BUMP_THRESHOLD,
+            PERSISTENT_BUMP_AMOUNT,
         );
     });
 

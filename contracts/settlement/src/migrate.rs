@@ -228,7 +228,11 @@ fn register_configured_usdc(env: &Env, caller: &Address) {
     let key = StorageKey::SupportedToken(usdc_token.clone());
     if !env.storage().persistent().has(&key) {
         env.storage().persistent().set(&key, &true);
-        env.storage().persistent().extend_ttl(&key, 50_000, 50_000);
+        env.storage().persistent().extend_ttl(
+            &key,
+            crate::PERSISTENT_BUMP_THRESHOLD,
+            crate::PERSISTENT_BUMP_AMOUNT,
+        );
         crate::events::emit_supported_token_added(env, caller, &usdc_token);
     }
     instance.set(&StorageKey::SupportedTokensMigrated, &true);
@@ -261,9 +265,11 @@ fn migrate_developer_slot(env: &Env, addr: &Address, usdc_token: &Address) {
             .checked_add(existing_v2)
             .unwrap_or_else(|| env.panic_with_error(SettlementError::DeveloperOverflow));
         env.storage().persistent().set(&v2_key, &merged);
-        env.storage()
-            .persistent()
-            .extend_ttl(&v2_key, 50_000, 50_000);
+        env.storage().persistent().extend_ttl(
+            &v2_key,
+            crate::types::PERSISTENT_BUMP_THRESHOLD,
+            crate::types::PERSISTENT_BUMP_AMOUNT,
+        );
         env.storage().persistent().remove(&v1_key);
     }
 }

@@ -21,9 +21,11 @@ use soroban_sdk::{Address, Env};
 use crate::{SettlementError, StorageKey};
 
 /// Persistent TTL parameters – kept in lockstep with the developer-balance
-/// entry TTL (50 000 ledgers live, 50 000 threshold).
-pub const HWM_LIVE: u32 = 50_000;
-pub const HWM_THRESHOLD: u32 = 50_000;
+/// entry TTL (#1131). Aliases of the shared constants so a HWM can never
+/// archive before the balance it protects; losing a HWM would reopen replay
+/// of old ledger sequences. Kept as `pub` names for API compatibility.
+pub const HWM_LIVE: u32 = crate::types::PERSISTENT_BUMP_AMOUNT;
+pub const HWM_THRESHOLD: u32 = crate::types::PERSISTENT_BUMP_THRESHOLD;
 
 /// Validate a settlement claim for `developer`.
 ///
