@@ -441,7 +441,7 @@ impl CalloraEscrow {
     /// # Errors
     /// * [`EscrowError::Unauthorized`] -- caller is not the current admin.
     /// * [`EscrowError::NotInitialized`] -- contract not initialized.
-    /// * [`EscrowError::SameSigner`] -- `new_signer` equals the current signer.
+    /// * [`EscrowError::InvalidInput`] -- `new_signer` equals the current signer.
     /// * [`EscrowError::CooldownActive`] -- a `rotate` ran within the cool-off window.
     ///
     /// # Events
@@ -463,7 +463,7 @@ impl CalloraEscrow {
             .get(&StorageKey::Signer)
             .ok_or(EscrowError::NotInitialized)?;
         if old_signer == new_signer {
-            return Err(EscrowError::SameSigner);
+            return Err(EscrowError::InvalidInput);
         }
 
         env.storage()

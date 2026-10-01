@@ -238,6 +238,60 @@ impl CalloraVault {
         Ok(())
     }
 
+    /// Shared validation pipeline for [`deduct`] and [`crate::views::simulate_deduct`].
+    ///
+    /// Checks, **in the same order `deduct` uses**, that:
+    /// 1. `caller` is the owner or the authorized deduct caller → [`VaultError::Unauthorized`].
+    /// 2. The vault is not paused → [`VaultError::Paused`].
+    /// 3. `amount > 0` → [`VaultError::AmountNotPositive`].
+    /// 4. `amount >= min_deposit` → [`VaultError::BelowMinDeposit`].
+    /// 5. `amount <= max_deduct` → [`VaultError::ExceedsMaxDeduct`].
+    /// 6. Tracked balance ≥ `amount` → [`VaultError::InsufficientBalance`].
+    ///
+    /// This function is **read-only** (no storage writes, no events, no auth).
+    /// `deduct` calls it before any mutation so that the validation order is
+    /// guaranteed identical to what `simulate_deduct` observes.
+    pub(crate) fn validate_deduct(env: &Env, caller: &Address, amount: i128) -> Result<(), VaultError> {
+        // 1. Owner-or-authorized-caller check (issue #1107: the owner may
+        //    always deduct; a configured authorized caller may deduct too).
+        Self::require_authorized_deduct_caller(env.clone(), caller)?;
+
+        // 2. Pause guard.
+        if env
+            .storage()
+            .instance()
+            .get::<_, bool>(&DataKey::Paused)
+            .unwrap_or(false)
+        {
+            return Err(VaultError::Paused);
+        }
+
+        // 3-5. Amount bounds (positive, min_deposit, max_deduct).
+        let min_dep = env
+            .storage()
+            .instance()
+            .get::<_, i128>(&DataKey::MinDeposit)
+            .unwrap();
+        let max_deduct = env
+            .storage()
+            .instance()
+            .get::<_, i128>(&DataKey::MaxDeduct)
+            .unwrap();
+        Self::require_valid_deduct_amount(amount, min_dep, max_deduct)?;
+
+        // 6. Balance check.
+        let current_bal = env
+            .storage()
+            .instance()
+            .get::<_, i128>(&DataKey::Balance)
+            .unwrap_or(0);
+        if current_bal < amount {
+            return Err(VaultError::InsufficientBalance);
+        }
+
+        Ok(())
+    }
+
     /// Initialize the Callora Vault contract (one-time setup).
     ///
     /// Stores configuration in instance storage and sets the paused flag to `false`.
@@ -442,21 +496,9 @@ impl CalloraVault {
     ) -> Result<(), VaultError> {
         caller.require_auth();
 
-        // Owner-or-caller authorization, via the helper that already encodes the
-        // documented rule. `DataKey::AuthorizedCaller` stores an `Option<Address>`
-        // (see `init` and `set_authorized_caller`), where `None` means "only the
-        // owner may deduct". Reading it as a bare `Address` used to panic with
-        // "Authorized caller not set" and made that fallback unreachable.
-        Self::require_authorized_deduct_caller(env.clone(), &caller)?;
+        // Shared validation — same function simulate_deduct calls.
+        Self::validate_deduct(&env, &caller, amount)?;
 
-        if env
-            .storage()
-            .instance()
-            .get::<_, bool>(&DataKey::Paused)
-            .unwrap_or(false)
-        {
-            return Err(VaultError::Paused);
-        }
         let settlement_addr = Self::require_settlement(&env)?;
         let usdc_addr = env
             .storage()
@@ -464,25 +506,11 @@ impl CalloraVault {
             .get::<_, Address>(&DataKey::UsdcToken)
             .ok_or(VaultError::NotInitialized)?;
 
-        let min_dep = env
-            .storage()
-            .instance()
-            .get::<_, i128>(&DataKey::MinDeposit)
-            .unwrap();
-        let max_deduct = env
-            .storage()
-            .instance()
-            .get::<_, i128>(&DataKey::MaxDeduct)
-            .unwrap();
-        Self::require_valid_deduct_amount(amount, min_dep, max_deduct)?;
         let current_bal = env
             .storage()
             .instance()
             .get::<_, i128>(&DataKey::Balance)
             .unwrap_or(0);
-        if current_bal < amount {
-            return Err(VaultError::InsufficientBalance);
-        }
 
         // Idempotency guard: reject a replayed request id *before* mutating the
         // tracked balance, forwarding USDC, or emitting events. A non-zero id
@@ -2756,6 +2784,11 @@ mod test_capabilities;
 
 #[cfg(test)]
 mod test_allowlist_remove;
+
+/// Parity tests for `simulate_deduct` vs `deduct` (Issue #1115).
+/// Run with: `cargo test -p callora-vault simulate`
+#[cfg(test)]
+mod test_simulate_parity;
 
 // #[cfg(test)]
 // mod test_gas_budget;

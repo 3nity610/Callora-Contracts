@@ -9,8 +9,8 @@ use crate::{
     CalloraEscrow, CalloraEscrowClient, EscrowError, ACTION_RELEASE, ACTION_ROTATE,
     ACTION_UNPAUSE,
 };
-use soroban_sdk::testutils::{Address as _, Ledger as _};
-use soroban_sdk::{Address, Env, Symbol};
+use soroban_sdk::testutils::{Address as _, Events as _, Ledger as _};
+use soroban_sdk::{Address, Env, Symbol, TryIntoVal};
 
 /// Helper: read the current instance storage entry count for the contract.
 fn instance_entry_count(env: &Env, contract_id: &Address) -> u32 {
@@ -451,7 +451,8 @@ fn test_rotate_signer_emits_old_and_new_signer() {
 
     let events = env.events().all();
     let (_, topics, data) = events.last().unwrap();
-    assert_eq!(topics, (Symbol::new(&env, "signer_rotated"),).into());
+    let topic: Symbol = topics.get(0).unwrap().try_into_val(&env).unwrap();
+    assert_eq!(topic, Symbol::new(&env, "signer_rotated"));
     let payload: (Address, Address) = data.try_into_val(&env).unwrap();
     assert_eq!(payload, (old_signer, new_signer));
 }

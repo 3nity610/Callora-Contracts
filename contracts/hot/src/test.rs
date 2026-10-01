@@ -8,7 +8,7 @@ use crate::admin::{DEFAULT_COOLDOWN_SECS, MAX_COOLDOWN_SECS, MIN_COOLDOWN_SECS};
 use crate::{CalloraHot, CalloraHotClient, HotError, ACTION_ROTATE};
 use soroban_sdk::testutils::Events as _;
 use soroban_sdk::testutils::{Address as _, Ledger as _};
-use soroban_sdk::{Address, Env, Symbol};
+use soroban_sdk::{Address, Env, Symbol, TryIntoVal};
 
 /// Helper: register a fresh hot contract initialized with `cooldown_secs` and
 /// return `(env, admin, signer, client)`. Auth is mocked for convenience.
