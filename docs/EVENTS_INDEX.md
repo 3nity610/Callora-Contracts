@@ -102,7 +102,7 @@ individual events through the ladder as indexer needs arise.
 | Event topic (action) | Constructor | Subject (topic2 today) | Data payload |
 |---|---|---|---|
 | `init` | `event_init` | — | admin, USDC token address |
-| `admin_changed` | `event_admin_changed` | current admin | new admin address |
+| `admin_changed` | `event_admin_changed` | previous admin | `(previous_admin, new_admin)` — emitted by `accept_admin()`, never by `set_admin()` |
 | `admin_transfer_started` | `event_admin_transfer_started` | current admin | new admin address |
 | `admin_transfer_completed` | `event_admin_transfer_completed` | — | — |
 | `admin_cancelled` | `event_admin_cancelled` | — | — |

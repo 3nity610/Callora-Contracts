@@ -45,52 +45,59 @@ fn admin_transfer_events_structure() {
 
     client.init(&admin, &usdc_addr);
 
-    // Clear events from init
+    // Step 1: set_admin — nomination must not announce the change yet.
     env.events().all();
-
-    // Step 1: set_admin
     client.set_admin(&admin, &new_admin);
 
     let events = env.events().all();
-    // admin_changed + admin_transfer_started → 2 events
-    assert!(
-        events.len() >= 2,
-        "expected at least 2 events, got {}",
+    assert_eq!(
+        events.len(),
+        1,
+        "nomination must publish exactly one event, got {}",
         events.len()
     );
 
-    let event_topics: std::vec::Vec<Symbol> = events
-        .iter()
-        .map(|e| {
-            let sym: Symbol = e.1.get(0).unwrap().into_val(&env);
-            sym
-        })
-        .collect();
+    let nomination = events.get(0).unwrap();
+    let topic0: Symbol = nomination.1.get(0).unwrap().into_val(&env);
+    assert_eq!(topic0, Symbol::new(&env, "admin_transfer_started"));
+    // Every distribute event carries the version marker at topic 1, so the
+    // subject address follows it.
+    assert_eq!(nomination.1.len(), 3);
+    let nominator: Address = nomination.1.get(2).unwrap().into_val(&env);
+    assert_eq!(nominator, admin);
+    let pending: Address = nomination.2.into_val(&env);
+    assert_eq!(pending, new_admin);
 
-    assert!(
-        event_topics.contains(&Symbol::new(&env, "admin_changed")),
-        "expected admin_changed event"
-    );
-    assert!(
-        event_topics.contains(&Symbol::new(&env, "admin_transfer_started")),
-        "expected admin_transfer_started event"
-    );
-
-    // Step 2: accept_admin
+    // Step 2: accept_admin — the change event is published here.
     env.events().all();
     client.accept_admin(&new_admin);
 
     let events = env.events().all();
-    assert!(
-        events.len() >= 1,
-        "expected at least 1 event after accept, got {}",
+    assert_eq!(
+        events.len(),
+        2,
+        "acceptance must publish admin_changed then admin_transfer_completed, got {}",
         events.len()
     );
-    let last_event = events.last().unwrap();
-    let topic0: Symbol = last_event.1.get(0).unwrap().into_val(&env);
-    assert_eq!(topic0, Symbol::new(&env, "admin_transfer_completed"));
-    let topic1: Address = last_event.1.get(1).unwrap().into_val(&env);
-    assert_eq!(topic1, new_admin);
+
+    let changed = events.get(0).unwrap();
+    let changed_topic0: Symbol = changed.1.get(0).unwrap().into_val(&env);
+    assert_eq!(changed_topic0, Symbol::new(&env, "admin_changed"));
+    let previous: Address = changed.1.get(2).unwrap().into_val(&env);
+    assert_eq!(previous, admin, "topic 2 must be the outgoing admin");
+    let (old_admin, updated): (Address, Address) = changed.2.into_val(&env);
+    assert_eq!(old_admin, admin, "data[0] must be the old admin");
+    assert_eq!(updated, new_admin, "data[1] must be the new admin");
+
+    let completed = events.get(1).unwrap();
+    let completed_topic0: Symbol = completed.1.get(0).unwrap().into_val(&env);
+    assert_eq!(
+        completed_topic0,
+        Symbol::new(&env, "admin_transfer_completed")
+    );
+    let completed_subject: Address = completed.1.get(2).unwrap().into_val(&env);
+    assert_eq!(completed_subject, new_admin);
+    let _: () = completed.2.into_val(&env);
 }
 
 #[test]
@@ -106,15 +113,32 @@ fn cancel_admin_transfer_event() {
     let client = DistributeClient::new(&env, &contract_addr);
 
     client.init(&admin, &usdc_addr);
+    env.events().all();
     client.set_admin(&admin, &new_admin);
     env.events().all();
 
     client.cancel_admin_transfer(&admin);
 
     let events = env.events().all();
-    let last_event = events.last().unwrap();
-    let topic0: Symbol = last_event.1.get(0).unwrap().into_val(&env);
+    assert_eq!(
+        events.len(),
+        1,
+        "cancellation must publish exactly one event, got {}",
+        events.len()
+    );
+
+    let event = events.get(0).unwrap();
+    let topic0: Symbol = event.1.get(0).unwrap().into_val(&env);
     assert_eq!(topic0, Symbol::new(&env, "admin_cancelled"));
+    let current: Address = event.1.get(2).unwrap().into_val(&env);
+    assert_eq!(current, admin);
+    let pending: Address = event.1.get(3).unwrap().into_val(&env);
+    assert_eq!(pending, new_admin);
+    let _: () = event.2.into_val(&env);
+
+    // A cancelled transfer must leave no admin_changed event behind: the only
+    // event recorded for this call is admin_cancelled.
+    assert_eq!(client.get_pending_admin(), None);
 }
 
 #[test]

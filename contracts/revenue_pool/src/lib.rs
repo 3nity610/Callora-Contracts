@@ -237,8 +237,11 @@ impl RevenuePool {
     /// * [`RevenuePoolError::Unauthorized`] - caller is not the current admin.
     ///
     /// # Events
-    /// Emits `admin_changed` with `(current, new_admin)` and
-    /// `admin_transfer_started` with `new_admin`.
+    /// Emits `admin_transfer_started` with `current` as topic and `new_admin`
+    /// as data. No `admin_changed` event is published while the transfer is
+    /// only pending — the admin does not change until `accept_admin`
+    /// (Issue #1163), so a nomination that is later cancelled never announces
+    /// a change that did not happen.
     pub fn set_admin(env: Env, caller: Address, new_admin: Address) {
         caller.require_auth();
         Self::require_not_emergency_paused(&env);
@@ -249,10 +252,6 @@ impl RevenuePool {
         let inst = env.storage().instance();
         inst.set(&Symbol::new(&env, PENDING_ADMIN_KEY), &new_admin);
         inst.extend_ttl(LIFETIME_THRESHOLD, BUMP_AMOUNT);
-        env.events().publish(
-            (events::event_admin_changed(&env), current.clone()),
-            (current.clone(), new_admin.clone()),
-        );
         env.events().publish(
             (events::event_admin_transfer_started(&env), current),
             new_admin,
@@ -266,7 +265,11 @@ impl RevenuePool {
     /// * [`RevenuePoolError::Unauthorized`] - caller is not the pending admin.
     ///
     /// # Events
-    /// Emits `admin_transfer_completed` with the new admin as topic.
+    /// Emits `admin_changed` with the previous admin as topic and
+    /// `(previous_admin, new_admin)` as data, followed by
+    /// `admin_transfer_completed` with the new admin as topic.
+    /// Both are published only after the admin slot is updated, so indexers
+    /// observe the change exactly when it happens (Issue #1163).
     pub fn accept_admin(env: Env, caller: Address) {
         caller.require_auth();
         Self::require_not_emergency_paused(&env);
@@ -277,9 +280,14 @@ impl RevenuePool {
         if caller != pending {
             env.panic_with_error(RevenuePoolError::Unauthorized);
         }
+        let previous = Self::admin(&env);
         inst.set(&Symbol::new(&env, ADMIN_KEY), &pending);
         inst.remove(&Symbol::new(&env, PENDING_ADMIN_KEY));
         inst.extend_ttl(LIFETIME_THRESHOLD, BUMP_AMOUNT);
+        env.events().publish(
+            (events::event_admin_changed(&env), previous.clone()),
+            (previous, pending.clone()),
+        );
         env.events()
             .publish((events::event_admin_transfer_completed(&env), pending), ());
     }
@@ -291,7 +299,8 @@ impl RevenuePool {
     /// * [`RevenuePoolError::Unauthorized`] - caller is not the pending admin.
     ///
     /// # Events
-    /// Emits `admin_transfer_completed` with the new admin as topic.
+    /// Emits `admin_changed` followed by `admin_transfer_completed` with the
+    /// new admin as topic.
     pub fn claim_admin(env: Env, caller: Address) {
         Self::accept_admin(env, caller);
     }

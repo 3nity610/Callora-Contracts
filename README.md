@@ -169,7 +169,8 @@ callora-contracts/
 │   ├── coverage.sh         # Local coverage runner
 │   └── check-wasm-size.sh  # WASM size verification
 ├── docs/
-│   ├── interfaces/                        # JSON contract interface summaries│   ├── ACCESS_CONTROL.md                  # Role-based access control overview│   └── CONTRACT_ADDRESS_CONFIGURATION.md  # Operator guide: configure contract addresses├── BENCHMARKS.md           # Gas/cost notes├── EVENT_SCHEMA.md         # Event topics and payloads
+│   ├── interfaces/                        # JSON contract interface summaries│   ├── ACCESS_CONTROL.md                  # Role-based access control overview│   └── CONTRACT_ADDRESS_CONFIGURATION.md  # Operator guide: configure contract addresses├── BEN
+CHMARKS.md           # Gas/cost notes├── EVENT_SCHEMA.md         # Event topics and payloads
 ├── UPGRADE.md              # Upgrade and migration path
 ├── SECURITY.md             # Security checklist
 └── tarpaulin.toml          # cargo-tarpaulin configuration
@@ -200,7 +201,7 @@ plus how to verify them with the vault's individual address view functions.
 - **Input validation**: `amount > 0` enforced on all deposits and deductions.
 - **Overflow checks**: Enabled in both dev and release profiles (`Cargo.toml`).
 - \*\*Role-Based Access\*\**: Documented in [docs/ACCESS_CONTROL.md](docs/ACCESS_CONTROL.md).
-- **Revenue pool admin audit trail**: `callora-revenue-pool::set_admin` now emits `admin_changed` with `(old_admin, new_admin)` before transfer nomination.
+- **Revenue pool admin audit trail**: `callora-revenue-pool` emits `admin_transfer_started` when an admin is nominated, and `admin_changed` with `(old_admin, new_admin)` only when the nominee accepts — a cancelled transfer emits no change event.
 - **Dedup hardening**: Duplicate `get_max_deduct` declaration removed in `callora-vault`; allowed depositor duplicate-path test now asserts list cardinality.
 - \*\*Emergency drain (Multisig + timelock)\*\*: `callora-revenue-pool` now exposes `propose_emergency_drain`, `execute_emergency_drain`, `cancel_emergency_drain`, and `get_pending_emergency_drain`. A proposal stores a `PendingEmergencyDrain` snapshot; execution is gated behind a 24-hour timelock (`EMERGENCY_DRAIN_TIMECLOCK_SECONDS = 86 400`). When the admin is a Stellar multisig account, `require_auth` enforces the native multi-signature threshold automatically.
 

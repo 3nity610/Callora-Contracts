@@ -7,6 +7,17 @@ All topic/data types refer to Soroban/Stellar XDR values.
 
 The `workspace-members-dedup` hardening patch does not introduce event additions, removals, or payload shape changes.
 
+## Change Note (2026-09)
+
+**Two-step admin rotation events (Issue #1163).**
+`set_admin()` now publishes `admin_transfer_started` only. The explicit
+`admin_changed` event moved to `accept_admin()` / `claim_admin()`, where it is
+emitted with `(previous_admin, new_admin)` immediately before
+`admin_transfer_completed`. A nomination that is cancelled therefore leaves no
+`admin_changed` event behind, so indexers keyed on that topic no longer record
+an admin change that never happened. Applies to `callora-revenue-pool` and
+`callora-distribute`.
+
 ## Change Note (2026-06)
 
 **Event topic centralization (PR: task/event-symbol-catalog).**
@@ -656,28 +667,37 @@ Emitted when the current admin nominates a successor (step 1 of 2).
 }
 ```
 
-> Indexers should treat funds as still under `current_admin` control until
+> This is the only event published by `set_admin()`; no `admin_changed` event
+> accompanies a nomination (Issue #1163). Indexers should treat the pool as
+> still under `current_admin` control until `admin_changed` /
 > `admin_transfer_completed` is observed.
 
 ---
 
 ### `admin_changed`
 
-Emitted when `set_admin()` is called to record the requested admin change.
-This event is emitted immediately before `admin_transfer_started`.
+Emitted when the nominee accepts the admin role (step 2 of 2), after the admin
+slot has been updated and immediately before `admin_transfer_completed`.
+`set_admin()` does **not** emit this event — nomination publishes only
+`admin_transfer_started`, so a transfer that is cancelled never produces a
+change event (Issue #1163).
 
-| Index   | Location | Type               | Description                           |
-|---------|----------|--------------------|---------------------------------------|
-| topic 0 | topics   | Symbol             | `"admin_changed"`                     |
-| topic 1 | topics   | Address            | `current_admin` — caller/admin        |
-| data    | data     | (Address, Address) | `(old_admin, new_admin)`              |
+| Index   | Location | Type               | Description                            |
+|---------|----------|--------------------|----------------------------------------|
+| topic 0 | topics   | Symbol             | `"admin_changed"`                      |
+| topic 1 | topics   | Address            | `previous_admin` — outgoing admin      |
+| data    | data     | (Address, Address) | `(previous_admin, new_admin)`          |
 
 ```json
 {
-  "topics": ["admin_changed", "GCURRENT_ADMIN..."],
-  "data": ["GCURRENT_ADMIN...", "GPENDING_ADMIN..."]
+  "topics": ["admin_changed", "GPREVIOUS_ADMIN..."],
+  "data": ["GPREVIOUS_ADMIN...", "GNEW_ADMIN..."]
 }
 ```
+
+> Topic 1 and `data[0]` are the admin that held the role immediately before
+> this event; `data[1]` is the incoming admin. One event therefore records the
+> complete handover.
 
 ---
 
@@ -1657,7 +1677,7 @@ Emitted by `set_freeze_operator()` for both set and clear operations.
 | `distribute`             | vault           | `distribute()`                           |
 | `swept`                  | vault           | `sweep_idle_balance()`                   |
 | `init`                   | revenue-pool    | `init()`                                 |
-| `admin_changed`          | revenue-pool    | `set_admin()`                            |
+| `admin_changed`          | revenue-pool    | `accept_admin()` / `claim_admin()`       |
 | `admin_transfer_started` | revenue-pool    | `set_admin()`                            |
 | `set_max_distribute`     | revenue-pool    | `set_max_distribute()`                   |
 | `admin_transfer_completed`| revenue-pool   | `claim_admin()`                          |
@@ -1704,3 +1724,4 @@ Emitted by `set_freeze_operator()` for both set and clear operations.
 | 0.3.0   | vault         | Added `"callora_v1"` version marker at topic[1] for `withdraw`, `withdraw_to`, `distribute`, `rescue_funds`, `reserve_cap_set`, `request_id_pruned` (Issue #1118) |
 | 0.3.0   | vault         | Version symbol renamed `"callora.v1"` → `"callora_v1"` (dot not allowed in Soroban Symbol charset) |
 | 0.0.1   | freeze        | Added `freeze_initialized`, `freeze_set`, `freeze_cleared`, `freeze_operator_set` events; `reason` persisted in storage; `get_freeze_status()` view added (Issue #1217) |
+| 0.3.0   | revenue-pool  | Moved `admin_changed` from `set_admin()` to `accept_admin()` so nomination no longer announces a change (Issue #1163) |

@@ -179,7 +179,7 @@ The Revenue Pool contract (`contracts/revenue_pool`) operates under the followin
 - [ ] Event schema documented and indexed — tracked in [#286](https://github.com/CalloraOrg/Callora-Contracts/issues/286)
 - [ ] Critical operations (deposit, withdraw, deduct) logged with full context — tracked in [#287](https://github.com/CalloraOrg/Callora-Contracts/issues/287)
 - [x] Unit tests assert `deposit` and `deduct` event topics/data (caller, request_id semantics, and resulting balance).
-- [x] `callora-revenue-pool::set_admin` emits an explicit `admin_changed` event carrying `(old_admin, new_admin)` before `admin_transfer_started`, and unit tests pin topics/data.
+- [x] `callora-revenue-pool` emits `admin_changed` carrying `(old_admin, new_admin)` only from `accept_admin()` / `claim_admin()`. Nomination (`set_admin`) emits `admin_transfer_started` alone and cancellation emits `admin_cancelled` alone, so no `admin_changed` event exists unless the transfer completed; unit tests pin topics/data for all three cases.
 
 ### Testing Coverage
 
