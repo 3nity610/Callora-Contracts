@@ -11,7 +11,15 @@ This document outlines the storage keys used by the Errors smart contract, detai
 ### `DataKey::ErrorReg(u32)`
 * **Tier:** **Persistent**
 * **Rationale:** This key stores the mapping of specific error codes to their detailed string descriptions. Since this acts as a core registry that protocols and frontends rely on to decode errors, it must be durably stored. `Persistent` storage guarantees that the state cannot be arbitrarily dropped without an explicit archival process, ensuring high availability.
-* **TTL policy:** Each registry entry is written with a **~60 day** TTL and refreshed whenever its remaining TTL drops below **~30 days**. The refresh happens on the write path (`register_error`, and `log_error` for a known code) **and on the read path** (`get_error_description`), so a code that integrators actively resolve cannot silently archive. The policy mirrors the workspace convention of `LEDGERS_PER_DAY = 17_280` (`contracts/fee`: `INSTANCE_BUMP_THRESHOLD` = 30 days, `INSTANCE_BUMP_AMOUNT` = 60 days).
+* **TTL policy:** Each registry entry is written with a **~60 day** TTL and refreshed whenever its remaining TTL drops below **~30 days**. The refresh happens on the write path (`register_error`, `update_error`, and `log_error` for a known code) **and on the read path** (`get_error_description`), so a code that integrators actively resolve cannot silently archive. The policy mirrors the workspace convention of `LEDGERS_PER_DAY = 17_280` (`contracts/fee`: `INSTANCE_BUMP_THRESHOLD` = 30 days, `INSTANCE_BUMP_AMOUNT` = 60 days).
+
+* **Bounded values:** Descriptions are capped at `MAX_DESC_LEN` (256 bytes) on both write paths (`register_error`, `update_error`); longer input is rejected with `DescriptionTooLong` before any storage access.
+
+* **Immutability:** `register_error` rejects an existing code with `AlreadyRegistered` and never overwrites. The only mutation path is the explicit `update_error` entrypoint (which rejects unknown codes with `NotRegistered`). This keeps descriptions stable enough to be treated as part of the public interface documented in `docs/ERROR_CODES.md`.
+
+* **TTL extension:** Every successful write (`register_error`, `update_error`) applies the registry TTL policy above via `extend_ttl(REGISTRY_TTL_THRESHOLD, REGISTRY_TTL_BUMP)`, so actively maintained registry entries do not lapse into archival.
+
+* **Events:** Successful writes emit `error_registered` (register) or `error_updated` (update) with topic `(event, admin)` and payload `(code, desc)`; rejected writes emit nothing. See `contracts/errors/src/events.rs`.
 
 ### `DataKey::RecentErr(Address)`
 * **Tier:** **Temporary**
