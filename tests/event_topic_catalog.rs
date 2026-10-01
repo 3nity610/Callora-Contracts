@@ -85,6 +85,9 @@ const VAULT_TOPICS: &[(&str, fn(&Env) -> Symbol)] = &[
     ("allowlist_add", |e| {
         callora_vault::events::event_allowlist_add(e)
     }),
+    ("allowlist_remove", |e| {
+        callora_vault::events::event_allowlist_remove(e)
+    }),
     ("allowlist_clear", |e| {
         callora_vault::events::event_allowlist_clear(e)
     }),
@@ -355,12 +358,12 @@ fn topic_counts_match_catalog_documentation() {
     // If you added a new event, update both this test AND the catalog.
     assert_eq!(
         VAULT_TOPICS.len(),
-        36,
+        37,
         "vault topic count changed — update docs/EVENT_TOPICS.md"
     );
     assert_eq!(
         SETTLEMENT_TOPICS.len(),
-        16,
+        20,
         "settlement topic count changed — update docs/EVENT_TOPICS.md"
     );
     assert_eq!(
@@ -378,7 +381,7 @@ fn topic_counts_match_catalog_documentation() {
             + SETTLEMENT_TOPICS.len()
             + REVENUE_POOL_TOPICS.len()
             + DISTRIBUTE_TOPICS.len(),
-        87,
+        90,
         "total topic count changed — update docs/EVENT_TOPICS.md"
     );
 }

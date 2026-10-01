@@ -2439,6 +2439,68 @@ impl CalloraVault {
         Ok(())
     }
 
+    /// Remove a single address from the deposit allowlist (owner-only).
+    ///
+    /// If the address is **not** in the allowlist the call succeeds without
+    /// modifying state or emitting an event (idempotent). All other entries
+    /// in the allowlist are preserved unchanged.
+    ///
+    /// # Parameters
+    /// - `caller` — Must be the vault owner (verified via `require_owner`).
+    /// - `depositor` — Address to remove from the allowlist.
+    ///
+    /// # Returns
+    /// `Ok(())` on success, or `VaultError::Unauthorized` if caller is not owner.
+    ///
+    /// # Events
+    /// Emits `("allowlist_remove", "callora_v1", caller, depositor)` only when
+    /// the address was actually present and removed. No event is emitted when
+    /// the address was not in the list.
+    pub fn remove_address(env: Env, caller: Address, depositor: Address) -> Result<(), VaultError> {
+        caller.require_auth();
+        Self::require_owner(env.clone(), caller.clone())?;
+
+        let allowlist = env
+            .storage()
+            .instance()
+            .get::<_, Vec<Address>>(&StorageKey::AllowedDepositors)
+            .unwrap_or_else(|| Vec::new(&env));
+
+        // Find the index of the address; if absent return success without
+        // touching storage or emitting an event (idempotent).
+        let mut found_index: Option<u32> = None;
+        for (i, addr) in allowlist.iter().enumerate() {
+            if addr == depositor {
+                found_index = Some(i as u32);
+                break;
+            }
+        }
+
+        let idx = match found_index {
+            Some(i) => i,
+            None => return Ok(()),
+        };
+
+        // Build a new list with the target address removed.
+        let mut new_list: Vec<Address> = Vec::new(&env);
+        for (i, addr) in allowlist.iter().enumerate() {
+            if i as u32 != idx {
+                new_list.push_back(addr);
+            }
+        }
+
+        env.storage()
+            .instance()
+            .set(&StorageKey::AllowedDepositors, &new_list);
+
+        env.events().publish(
+            (events::event_allowlist_remove(&env), events::event_version_v1(&env), caller, depositor),
+            (),
+        );
+
+        Ok(())
+    }
+
     /// Remove all addresses from the deposit allowlist (owner-only).
     ///
     /// This function is idempotent — calling it on an empty allowlist succeeds
@@ -2691,6 +2753,9 @@ mod test_timelock;
 
 #[cfg(test)]
 mod test_capabilities;
+
+#[cfg(test)]
+mod test_allowlist_remove;
 
 // #[cfg(test)]
 // mod test_gas_budget;

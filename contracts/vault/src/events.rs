@@ -216,6 +216,17 @@ pub fn event_allowlist_add(env: &Env) -> Symbol {
     Symbol::new(env, "allowlist_add")
 }
 
+/// Emitted when a single address is removed from the deposit allowlist.
+///
+/// Topics: ("allowlist_remove", "callora_v1", caller: Address, depositor: Address)
+/// Data: ()
+///
+/// Only emitted when the address was actually present and removed. No event is
+/// emitted when the address was not in the list (idempotent remove).
+pub fn event_allowlist_remove(env: &Env) -> Symbol {
+    Symbol::new(env, "allowlist_remove")
+}
+
 /// Emitted when the deposit allowlist is cleared.
 ///
 /// Topics: ("allowlist_clear", caller: Address)
@@ -572,6 +583,13 @@ mod tests {
         let env = soroban_sdk::Env::default();
         let sym = event_allowlist_add(&env);
         assert_eq!(sym, Symbol::new(&env, "allowlist_add"));
+    }
+
+    #[test]
+    fn test_event_allowlist_remove_bytes() {
+        let env = soroban_sdk::Env::default();
+        let sym = event_allowlist_remove(&env);
+        assert_eq!(sym, Symbol::new(&env, "allowlist_remove"));
     }
 
     #[test]
