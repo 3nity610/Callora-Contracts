@@ -892,14 +892,27 @@ impl CalloraSettlement {
     /// Set the daily withdrawal cap for a developer (admin only).
     ///
     /// A cap of `0` means unlimited (no daily limit enforced).
+    /// Negative caps are rejected with `AmountNotPositive`.
+    ///
+    /// # Errors
+    /// Returns `Unauthorized` if the caller is not the admin, or
+    /// `AmountNotPositive` if `cap` is negative.
     ///
     /// # Events
     /// Emits `daily_withdraw_cap_changed` with the developer and new cap.
-    pub fn set_daily_withdraw_cap(env: Env, caller: Address, developer: Address, cap: i128) {
+    pub fn set_daily_withdraw_cap(
+        env: Env,
+        caller: Address,
+        developer: Address,
+        cap: i128,
+    ) -> Result<(), SettlementError> {
         caller.require_auth();
-        let current_admin = Self::get_admin(env.clone()).unwrap();
+        let current_admin = Self::get_admin(env.clone())?;
         if caller != current_admin {
-            env.panic_with_error(SettlementError::Unauthorized);
+            return Err(SettlementError::Unauthorized);
+        }
+        if cap < 0 {
+            return Err(SettlementError::AmountNotPositive);
         }
         let cap_key = StorageKey::DailyWithdrawCap(developer.clone());
         env.storage().persistent().set(&cap_key, &cap);
@@ -915,6 +928,7 @@ impl CalloraSettlement {
                 new_cap: cap,
             },
         );
+        Ok(())
     }
 
     /// Get the daily withdrawal cap for a developer. Returns `0` (unlimited)

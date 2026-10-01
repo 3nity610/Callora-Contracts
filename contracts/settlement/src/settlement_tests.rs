@@ -2827,6 +2827,33 @@ mod settlement_tests {
     }
 
     #[test]
+    fn test_daily_cap_rejects_negative_without_changes() {
+        use soroban_sdk::IntoVal;
+
+        let (env, addr, admin, _vault, _third_party, _token) = setup_contract();
+        let client = CalloraSettlementClient::new(&env, &addr);
+        let developer = Address::generate(&env);
+
+        client.set_daily_withdraw_cap(&admin, &developer, &1000i128);
+        let result = client.try_set_daily_withdraw_cap(&admin, &developer, &-1i128);
+
+        assert!(is_error(result, SettlementError::AmountNotPositive));
+        assert_eq!(client.get_daily_withdraw_cap(&developer), 1000i128);
+
+        let cap_events = env
+            .events()
+            .all()
+            .iter()
+            .filter(|event| {
+                !event.1.is_empty()
+                    && event.1.get(0).unwrap().into_val::<Symbol>(&env)
+                        == Symbol::new(&env, "daily_withdraw_cap_changed")
+            })
+            .count();
+        assert_eq!(cap_events, 1);
+    }
+
+    #[test]
     fn test_get_daily_withdraw_cap_returns_zero_when_unset() {
         let (env, addr, _admin, _vault, _third_party, _token) = setup_contract();
         let client = CalloraSettlementClient::new(&env, &addr);
