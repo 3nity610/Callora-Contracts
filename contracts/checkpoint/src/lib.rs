@@ -251,7 +251,7 @@ impl CalloraCheckpoint {
             .storage()
             .instance()
             .get(&StorageKey::PendingAdmin)
-            .unwrap_or_else(|| env.panic_with_error(CheckpointError::NoAdminTransferPending))
+            .unwrap_or_else(|| env.panic_with_error(CheckpointError::NoAdminTransferPending));
 
         if caller != pending {
             env.panic_with_error(CheckpointError::Unauthorized);
@@ -286,15 +286,11 @@ impl CalloraCheckpoint {
     pub fn cancel_admin_transfer(env: Env, caller: Address) -> Result<(), CheckpointError> {
         Self::require_admin(&env, &caller)?;
 
-        if !env.storage().instance().has(&StorageKey::PendingAdmin) {
-            env.panic_with_error(CheckpointError::NoAdminTransferPending);
-        }
-
         let pending: Address = env
             .storage()
             .instance()
             .get(&StorageKey::PendingAdmin)
-            .unwrap_or_else(|| env.panic_with_error(CheckpointError::NoAdminTransferPending))
+            .unwrap_or_else(|| env.panic_with_error(CheckpointError::NoAdminTransferPending));
 
         env.storage().instance().remove(&StorageKey::PendingAdmin);
 
