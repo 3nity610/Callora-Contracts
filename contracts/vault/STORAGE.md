@@ -2,6 +2,65 @@
 
 This document describes the storage layout of the Callora Vault contract, including storage keys, data types, and access control implications.
 
+## TTL Policy Rationale
+
+This section captures the rationale for every storage tier's TTL constants and their relationship to the cross-contract policy defined in [`docs/STORAGE_TTL_DOCTOR.md`](../../docs/STORAGE_TTL_DOCTOR.md).
+
+### Why named constants matter
+
+Magic-number literals (`50000`, etc.) make audits error-prone and prevent the TTL doctor script from validating expected values against live on-chain state. Every `extend_ttl` call in this contract must reference a named constant so the doctor can load the expected values from the policy table.
+
+### Ledger rate assumption
+
+**17 280 ledgers/day** (5-second close time on Stellar mainnet). All TTL values below use this rate.
+
+### Instance storage (long-lived config)
+
+| Constant                  | Value (ledgers)           | Approximate Duration | Rationale |
+| ------------------------- | ------------------------- | -------------------- | --------- |
+| `INSTANCE_BUMP_THRESHOLD` | `17_280 × 30` = 518 400  | ~30 days             | Bump fires when fewer than 30 days of TTL remain, giving operators a large observation window before archival. |
+| `INSTANCE_BUMP_AMOUNT`    | `17_280 × 60` = 1 036 800 | ~60 days             | Each bump doubles the window. Minimises on-chain write frequency while keeping archival risk low. |
+
+All critical vault state (Admin, Balance, Settlement, RevenuePool, MaxDeduct, Paused, Metadata, DepositorList, …) lives in instance storage. To prevent archival on infrequently-used vaults, every **mutating** entrypoint calls `env.storage().instance().extend_ttl(INSTANCE_BUMP_THRESHOLD, INSTANCE_BUMP_AMOUNT)`.
+
+Entrypoints that bump instance TTL: `init`, `deposit`, `deduct`, `batch_deduct`, `withdraw`, `withdraw_to`, `set_allowed_depositor`, `set_authorized_caller`, `set_settlement`, `set_revenue_pool`, `set_max_deduct`, `set_metadata`, `upgrade`, `pause`, `unpause`, `set_reserve_cap`.
+
+Pure view functions (`get_meta`, `balance`, `get_admin`, `get_usdc_token`, `get_settlement`, `get_revenue_pool`, `get_contract_addresses`, `is_paused`, `is_authorized_depositor`, `get_metadata`, `get_max_deduct`, `get_allowed_depositors`, `is_request_processed`, `get_reserve_cap`) do **not** bump the TTL — they are read-only and incur no write cost.
+
+### Persistent storage — request-id idempotency markers
+
+| Constant                    | Value (ledgers)          | Approximate Duration | Rationale |
+| --------------------------- | ------------------------ | -------------------- | --------- |
+| `REQUEST_ID_BUMP_THRESHOLD` | `17_280 × 7` = 120 960  | ~7 days              | Idempotency markers must outlive the client retry window. 7 days covers typical backend re-submission timeouts. |
+| `REQUEST_ID_BUMP_AMOUNT`    | `17_280 × 30` = 518 400 | ~30 days             | 30-day bump is a best-effort deduplication guarantee. After expiry the marker auto-archives and the `request_id` can be reused (callers requiring longer windows must track off-chain). |
+
+`StorageKey::ProcessedRequest(Symbol)` uses **temporary storage** — it auto-archives after TTL expiry; no manual cleanup is required.
+
+### Persistent storage — rate-limit token bucket
+
+| Constant                  | Value (ledgers)          | Approximate Duration | Rationale |
+| ------------------------- | ------------------------ | -------------------- | --------- |
+| `RATE_LIMIT_BUMP_THRESHOLD` | `17_280 × 7` = 120 960 | ~7 days              | Rate-limit state must persist across refill windows. 7 days exceeds any realistic refill period. |
+| `RATE_LIMIT_BUMP_AMOUNT`   | `17_280 × 30` = 518 400 | ~30 days             | Aligns with idempotency-marker policy: short-lived persistent records use a 30-day bump. |
+
+`StorageKey::DeveloperState(Address)` persists the token-bucket state. Constants declared in `rate_limit.rs` as `RATE_LIMIT_BUMP_THRESHOLD` and `RATE_LIMIT_BUMP_AMOUNT`.
+
+### Persistent storage — reserve caps
+
+Reserve cap entries (`StorageKey::ReserveCap(Address)`) are admin configuration. They follow the **instance storage policy** (30-day threshold, 60-day bump) because they are long-lived and critical. The `set_reserve_cap` entrypoint calls `extend_ttl(INSTANCE_BUMP_THRESHOLD, INSTANCE_BUMP_AMOUNT)` on the cap key.
+
+> **Note:** `INSTANCE_BUMP_THRESHOLD` and `INSTANCE_BUMP_AMOUNT` must be declared at the crate root (e.g. in `lib.rs`) for the `limits.rs` module to import them. The current simplified `lib.rs` does not declare these constants — this is a tracked bug (see `docs/STORAGE_TTL_DOCTOR.md` Action Items).
+
+### Cross-contract policy alignment
+
+This vault's TTL constants are the **reference values** for the cross-contract target policy documented in [`docs/STORAGE_TTL_DOCTOR.md`](../../docs/STORAGE_TTL_DOCTOR.md). Specifically:
+
+- `INSTANCE_BUMP_THRESHOLD = 17_280 * 30` and `INSTANCE_BUMP_AMOUNT = 17_280 * 60` are the target for all long-lived instance and persistent entries across Vault, Settlement, and Revenue Pool.
+- `RATE_LIMIT_BUMP_THRESHOLD` / `RATE_LIMIT_BUMP_AMOUNT` are the target for short-lived persistent entries (timelocks, migration records).
+- The TTL doctor script (`scripts/storage-ttl-doctor.ts`) uses these values as the expected baseline when `--policy` is passed.
+
+---
+
 ## Instance Storage TTL
 
 All critical vault state lives in instance storage. To prevent archival on infrequently-used vaults, **every mutating entrypoint** and **every public view function ("hot read path")** calls `env.storage().instance().extend_ttl(threshold, extend_to)`.
