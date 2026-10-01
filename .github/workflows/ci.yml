@@ -38,6 +38,10 @@ jobs:
       - name: Clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
 
+      - name: Check Fuzz Targets
+        continue-on-error: true
+        run: cargo check -p callora-settlement-fuzz
+
       - name: Build settlement WASM for tests
         run: cargo build --package callora-settlement --target wasm32-unknown-unknown --release
 
