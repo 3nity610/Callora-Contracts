@@ -368,6 +368,41 @@ impl CalloraHot {
 
         Ok(())
     }
+
+    /// Cancel a pending admin transfer. Only the current admin may call.
+    ///
+    /// Returns [`HotError::NoPendingAdmin`] when no nomination is in progress.
+    /// Clears the pending admin and emits `admin_cancelled` with the previous
+    /// pending admin address.
+    ///
+    /// # Parameters
+    /// * `caller` -- Must be the current admin; must authorize.
+    ///
+    /// # Errors
+    /// * [`HotError::NotInitialized`] -- contract not initialized.
+    /// * [`HotError::NoPendingAdmin`] -- no nomination is in progress.
+    ///
+    /// # Events
+    /// Emits `admin_cancelled` with `(caller)` as topic and the cancelled
+    /// pending admin address as data.
+    pub fn cancel_admin_transfer(env: Env, caller: Address) -> Result<(), HotError> {
+        Self::require_admin(&env, &caller)?;
+
+        let cancelled: Address = env
+            .storage()
+            .instance()
+            .get(&StorageKey::PendingAdmin)
+            .ok_or(HotError::NoPendingAdmin)?;
+
+        env.storage()
+            .instance()
+            .remove(&StorageKey::PendingAdmin);
+
+        env.events()
+            .publish((events::event_admin_cancelled(&env), caller), cancelled);
+
+        Ok(())
+    }
 }
 
 // ---------------------------------------------------------------------------

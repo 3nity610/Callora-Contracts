@@ -47,6 +47,15 @@ pub fn event_admin_accepted(env: &Env) -> Symbol {
     Symbol::new(env, "admin_accepted")
 }
 
+/// Returns the Symbol for the `"admin_cancelled"` event topic.
+///
+/// Emitted when the current admin cancels a pending admin nomination via
+/// [`crate::CalloraHot::cancel_admin_transfer`]. The data contains the
+/// address of the pending admin that was cancelled.
+pub fn event_admin_cancelled(env: &Env) -> Symbol {
+    Symbol::new(env, "admin_cancelled")
+}
+
 /// Returns the Symbol for the `"paused"` event topic.
 ///
 /// Emitted by [`crate::pause::do_pause`] when the circuit-breaker is

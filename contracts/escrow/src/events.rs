@@ -47,6 +47,15 @@ pub fn event_admin_accepted(env: &Env) -> Symbol {
     Symbol::new(env, "admin_accepted")
 }
 
+/// Returns the Symbol for the `"admin_cancelled"` event topic.
+///
+/// Emitted when the current admin cancels a pending admin nomination via
+/// [`crate::CalloraEscrow::cancel_admin_transfer`]. The data contains the
+/// address of the pending admin that was cancelled.
+pub fn event_admin_cancelled(env: &Env) -> Symbol {
+    Symbol::new(env, "admin_cancelled")
+}
+
 /// Returns the Symbol for the `"asset_approved"` event topic.
 ///
 /// Emitted when the admin marks a payment asset as approved for escrow

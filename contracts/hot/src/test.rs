@@ -285,6 +285,58 @@ fn test_new_admin_controls_cooldown_after_rotation() {
     assert_eq!(client.get_cooldown(), 120);
 }
 
+// Cancel a pending admin transfer. Only the current admin may call.
+
+#[test]
+fn test_cancel_admin_transfer_happy_path() {
+    let (env, admin, _signer, client) = setup(Some(60));
+    let cancelled_admin = Address::generate(&env);
+    let new_admin = Address::generate(&env);
+
+    // Set up a pending admin nomination.
+    client.set_admin(&admin, &new_admin);
+    assert_eq!(client.get_pending_admin(), Some(new_admin.clone()));
+
+    // Cancel the pending nomination as the current admin.
+    client.cancel_admin_transfer(&admin);
+    assert_eq!(client.get_pending_admin(), None);
+    // Current admin still the same.
+    assert_eq!(client.get_admin(), admin);
+}
+
+#[test]
+fn test_cancel_admin_transfer_no_pending_rejected() {
+    let (env, _admin, _signer, client) = setup(Some(60));
+    // No pending admin exists; cancelling should return NoPendingAdmin.
+    let res = client.try_cancel_admin_transfer(&_admin);
+    assert_eq!(res, Err(Ok(HotError::NoPendingAdmin)));
+}
+
+#[test]
+fn test_cancel_admin_transfer_non_admin_rejected() {
+    let (env, _admin, _signer, client) = setup(Some(60));
+    let intruder = Address::generate(&env);
+    let res = client.try_cancel_admin_transfer(&intruder);
+    assert_eq!(res, Err(Ok(HotError::Unauthorized)));
+}
+
+// Cancelled nominees cannot accept the admin transfer.
+#[test]
+fn test_cancelled_admin_cannot_accept() {
+    let (env, admin, _signer, client) = setup(Some(60));
+    let new_admin = Address::generate(&env);
+
+    // Set up a pending admin nomination.
+    client.set_admin(&admin, &new_admin);
+
+    // Cancel the pending nomination.
+    client.cancel_admin_transfer(&admin);
+
+    // The former pending admin cannot accept (no pending exists).
+    let res = client.try_accept_admin(&new_admin);
+    assert_eq!(res, Err(Ok(HotError::NoPendingAdmin)));
+}
+
 // ===========================================================================
 // Benchmark setup smoke-test (validates benches/main.rs entrypoints)
 // ===========================================================================

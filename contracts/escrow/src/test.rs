@@ -386,6 +386,62 @@ fn test_new_admin_can_perform_guarded_actions_after_rotation() {
     client.release(&new_admin, &recipient);
 }
 
+/// Cancel a pending admin transfer. Only the current admin may call.
+///
+/// # Acceptance Criteria
+/// - Returns `EscrowError::NoPendingAdmin` when no nomination is in progress.
+/// - Clears the pending admin and emits `admin_cancelled`.
+/// - The previous admin retains full authority after cancellation.
+#[test]
+fn test_cancel_admin_transfer_happy_path() {
+    let (env, admin, _signer, client) = setup(Some(60));
+    let cancelled_admin = Address::generate(&env);
+    let new_admin = Address::generate(&env);
+
+    // Set up a pending admin nomination.
+    client.set_admin(&admin, &new_admin);
+    assert_eq!(client.get_pending_admin(), Some(new_admin.clone()));
+
+    // Cancel the pending nomination as the current admin.
+    client.cancel_admin_transfer(&admin);
+    assert_eq!(client.get_pending_admin(), None);
+    // Current admin still the same.
+    assert_eq!(client.get_admin(), admin);
+}
+
+#[test]
+fn test_cancel_admin_transfer_no_pending_rejected() {
+    let (env, _admin, _signer, client) = setup(Some(60));
+    // No pending admin exists; cancelling should return NoPendingAdmin.
+    let res = client.try_cancel_admin_transfer(&_admin);
+    assert_eq!(res, Err(Ok(EscrowError::NoPendingAdmin)));
+}
+
+#[test]
+fn test_cancel_admin_transfer_non_admin_rejected() {
+    let (env, _admin, _signer, client) = setup(Some(60));
+    let intruder = Address::generate(&env);
+    let res = client.try_cancel_admin_transfer(&intruder);
+    assert_eq!(res, Err(Ok(EscrowError::Unauthorized)));
+}
+
+/// Cancelled nominees cannot accept the admin transfer.
+#[test]
+fn test_cancelled_admin_cannot_accept() {
+    let (env, admin, _signer, client) = setup(Some(60));
+    let new_admin = Address::generate(&env);
+
+    // Set up a pending admin nomination.
+    client.set_admin(&admin, &new_admin);
+
+    // Cancel the pending nomination.
+    client.cancel_admin_transfer(&admin);
+
+    // The former pending admin cannot accept (no pending exists).
+    let res = client.try_accept_admin(&new_admin);
+    assert_eq!(res, Err(Ok(EscrowError::NoPendingAdmin)));
+}
+
 /// An approved-asset flag is never set by default (deny-by-default).
 #[test]
 fn test_is_asset_approved_deny_by_default() {
