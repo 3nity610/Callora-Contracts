@@ -1542,6 +1542,95 @@ operational edge cases (off-chain payment reconciliation, dispute resolution).
 
 ---
 
+## Contract: `callora-freeze` (v0.0.1)
+
+Every state-changing entrypoint emits exactly one event. Topic[1] is always
+`"callora_v1"` for version filtering. The `reason` and `frozen_at` fields from
+`freeze_set` are also persisted in storage and readable via `get_freeze_status()`.
+
+### `freeze_initialized`
+
+Emitted once by `init()`.
+
+| Index   | Location | Type    | Description                           |
+|---------|----------|---------|---------------------------------------|
+| topic 0 | topics   | Symbol  | `"freeze_initialized"`                |
+| topic 1 | topics   | Symbol  | `"callora_v1"` (version marker)       |
+| topic 2 | topics   | Address | `admin` — initial admin address       |
+| data    | data     | `()`    | empty                                 |
+
+```json
+{
+  "topics": ["freeze_initialized", "callora_v1", "GADMIN..."],
+  "data": null
+}
+```
+
+---
+
+### `freeze_set`
+
+Emitted by `freeze()`. Payload includes the reason label and ledger timestamp.
+
+| Index      | Location | Type     | Description                                 |
+|------------|----------|----------|---------------------------------------------|
+| topic 0    | topics   | Symbol   | `"freeze_set"`                              |
+| topic 1    | topics   | Symbol   | `"callora_v1"` (version marker)             |
+| topic 2    | topics   | Address  | `caller` — admin or freeze operator         |
+| `reason`   | data     | Symbol   | reason label supplied by the caller         |
+| `frozen_at`| data     | u64      | `env.ledger().timestamp()` at freeze time   |
+
+```json
+{
+  "topics": ["freeze_set", "callora_v1", "GCALLER..."],
+  "data": { "reason": "exploit_risk", "frozen_at": 1700000000 }
+}
+```
+
+---
+
+### `freeze_cleared`
+
+Emitted by `unfreeze()`. Persisted reason and timestamp are cleared atomically.
+
+| Index   | Location | Type    | Description                           |
+|---------|----------|---------|---------------------------------------|
+| topic 0 | topics   | Symbol  | `"freeze_cleared"`                    |
+| topic 1 | topics   | Symbol  | `"callora_v1"` (version marker)       |
+| topic 2 | topics   | Address | `caller` — admin who unfroze          |
+| data    | data     | `()`    | empty                                 |
+
+```json
+{
+  "topics": ["freeze_cleared", "callora_v1", "GADMIN..."],
+  "data": null
+}
+```
+
+---
+
+### `freeze_operator_set`
+
+Emitted by `set_freeze_operator()` for both set and clear operations.
+`new_operator: null` means the role was cleared.
+
+| Index          | Location | Type              | Description                                         |
+|----------------|----------|-------------------|-----------------------------------------------------|
+| topic 0        | topics   | Symbol            | `"freeze_operator_set"`                             |
+| topic 1        | topics   | Symbol            | `"callora_v1"` (version marker)                     |
+| topic 2        | topics   | Address           | `caller` — admin who updated the operator           |
+| `old_operator` | data     | `Option<Address>` | operator before this call; `null` if none was set   |
+| `new_operator` | data     | `Option<Address>` | operator after this call; `null` if role was cleared|
+
+```json
+{
+  "topics": ["freeze_operator_set", "callora_v1", "GADMIN..."],
+  "data": { "old_operator": null, "new_operator": "GOPERATOR..." }
+}
+```
+
+---
+
 ## Indexer quick-reference
 
 | Event                    | Contract        | Trigger                                  |
@@ -1590,6 +1679,10 @@ operational edge cases (off-chain payment reconciliation, dispute resolution).
 | `balance_credited`       | settlement      | `receive_payment()` with `to_pool=false` |
 | `vault_changed`          | settlement      | `set_vault()`                            |
 | `developer_force_credited`| settlement     | `force_credit_developer()`               |
+| `freeze_initialized`     | freeze          | `init()`                                 |
+| `freeze_set`             | freeze          | `freeze()`                               |
+| `freeze_cleared`         | freeze          | `unfreeze()`                             |
+| `freeze_operator_set`    | freeze          | `set_freeze_operator()` (set or clear)   |
 
 ---
 
@@ -1610,3 +1703,4 @@ operational edge cases (off-chain payment reconciliation, dispute resolution).
 | 0.2.0   | settlement    | Added `developer_min_balance_changed` event on `set_developer_min_balance()` (Issue #633) |
 | 0.3.0   | vault         | Added `"callora_v1"` version marker at topic[1] for `withdraw`, `withdraw_to`, `distribute`, `rescue_funds`, `reserve_cap_set`, `request_id_pruned` (Issue #1118) |
 | 0.3.0   | vault         | Version symbol renamed `"callora.v1"` → `"callora_v1"` (dot not allowed in Soroban Symbol charset) |
+| 0.0.1   | freeze        | Added `freeze_initialized`, `freeze_set`, `freeze_cleared`, `freeze_operator_set` events; `reason` persisted in storage; `get_freeze_status()` view added (Issue #1217) |
