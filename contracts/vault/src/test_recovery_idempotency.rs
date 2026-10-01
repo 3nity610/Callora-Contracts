@@ -357,9 +357,11 @@ fn prune_works_during_recovery_mode() {
     let key = StorageKey::ProcessedRequest(rid);
     env.as_contract(&vault_addr, || {
         env.storage().persistent().set(&key, &true);
-        env.storage()
-            .persistent()
-            .extend_ttl(&key, REQUEST_ID_BUMP_THRESHOLD, REQUEST_ID_BUMP_AMOUNT);
+        env.storage().persistent().extend_ttl(
+            &key,
+            REQUEST_ID_BUMP_THRESHOLD,
+            REQUEST_ID_BUMP_AMOUNT,
+        );
     });
     assert!(client.is_request_processed(&rid));
 

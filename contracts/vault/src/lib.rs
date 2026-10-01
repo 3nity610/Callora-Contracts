@@ -1,4 +1,5 @@
 #![allow(clippy::too_many_arguments)]
+#![allow(dead_code)]
 #![no_std]
 //!
 //! # Callora Vault Contract — deposit/withdraw/deduct/distribute with pause circuit-breaker.
@@ -450,8 +451,14 @@ impl CalloraVault {
         let token_client = token::Client::new(&env, &token_addr);
         token_client.transfer(&caller, &env.current_contract_address(), &amount);
 
-        env.events()
-            .publish((events::event_deposit(&env), events::event_version_v1(&env), caller), (amount, new_bal));
+        env.events().publish(
+            (
+                events::event_deposit(&env),
+                events::event_version_v1(&env),
+                caller,
+            ),
+            (amount, new_bal),
+        );
         Ok(())
     }
 
@@ -732,14 +739,14 @@ impl CalloraVault {
     // even when writes are infrequent.
     // -----------------------------------------------------------------------
 
-    /// Modifies the authorized caller (Owner only).
-    ///
-    /// Performs validation checks identical to `deduct` and returns the predicted
-    /// balance after the specified `amount` is deducted.
-    ///
-    /// # Errors
-    /// Returns `VaultError` under the exact same conditions as `deduct`
-    /// (e.g., paused state, amount exceeding balance, amount exceeding max deduction limit).
+    // Modifies the authorized caller (Owner only).
+    //
+    // Performs validation checks identical to `deduct` and returns the predicted
+    // balance after the specified `amount` is deducted.
+    //
+    // # Errors
+    // Returns `VaultError` under the exact same conditions as `deduct`
+    // (e.g., paused state, amount exceeding balance, amount exceeding max deduction limit).
     // pub fn simulate_deduct(
     //     env: Env,
     //     caller: Address,
@@ -929,8 +936,14 @@ impl CalloraVault {
 
         env.storage().instance().set(&DataKey::Paused, &true);
 
-        env.events()
-            .publish((events::event_vault_paused(&env), events::event_version_v1(&env), caller), ());
+        env.events().publish(
+            (
+                events::event_vault_paused(&env),
+                events::event_version_v1(&env),
+                caller,
+            ),
+            (),
+        );
         Ok(())
     }
 
@@ -978,8 +991,14 @@ impl CalloraVault {
 
         env.storage().instance().set(&DataKey::Paused, &false);
 
-        env.events()
-            .publish((events::event_vault_unpaused(&env), events::event_version_v1(&env), caller), ());
+        env.events().publish(
+            (
+                events::event_vault_unpaused(&env),
+                events::event_version_v1(&env),
+                caller,
+            ),
+            (),
+        );
         Ok(())
     }
 
@@ -1101,7 +1120,12 @@ impl CalloraVault {
         );
 
         env.events().publish(
-            (events::event_withdraw_to(&env), events::event_version_v1(&env), owner, to),
+            (
+                events::event_withdraw_to(&env),
+                events::event_version_v1(&env),
+                owner,
+                to,
+            ),
             (amount, new_bal),
         );
 
@@ -1145,11 +1169,14 @@ impl CalloraVault {
 
         usdc.transfer(&env.current_contract_address(), &to, &amount);
 
-        env.events()
-            .publish(
-                (events::event_distribute(&env), events::event_version_v1(&env), to),
-                amount,
-            );
+        env.events().publish(
+            (
+                events::event_distribute(&env),
+                events::event_version_v1(&env),
+                to,
+            ),
+            amount,
+        );
     }
 
     /// Return `true` if the vault is currently paused, `false` otherwise.
@@ -1265,8 +1292,14 @@ impl CalloraVault {
             .instance()
             .set(&DataKey::MaxDeduct, &max_deduct);
 
-        env.events()
-            .publish((events::event_set_max_deduct(&env), events::event_version_v1(&env), caller), max_deduct);
+        env.events().publish(
+            (
+                events::event_set_max_deduct(&env),
+                events::event_version_v1(&env),
+                caller,
+            ),
+            max_deduct,
+        );
         Ok(())
     }
 
@@ -1543,8 +1576,14 @@ impl CalloraVault {
             .instance()
             .set(&StorageKey::PendingAdmin, &new_admin);
         Self::bump_instance_ttl(&env);
-        env.events()
-            .publish((events::event_admin_nominated(&env), events::event_version_v1(&env), caller), new_admin);
+        env.events().publish(
+            (
+                events::event_admin_nominated(&env),
+                events::event_version_v1(&env),
+                caller,
+            ),
+            new_admin,
+        );
         Ok(())
     }
 
@@ -1572,8 +1611,14 @@ impl CalloraVault {
         new_admin.require_auth();
         env.storage().instance().set(&StorageKey::Admin, &new_admin);
         env.storage().instance().remove(&StorageKey::PendingAdmin);
-        env.events()
-            .publish((events::event_admin_accepted(&env), events::event_version_v1(&env), new_admin), ());
+        env.events().publish(
+            (
+                events::event_admin_accepted(&env),
+                events::event_version_v1(&env),
+                new_admin,
+            ),
+            (),
+        );
         Ok(())
     }
 
@@ -1621,15 +1666,14 @@ impl CalloraVault {
             .instance()
             .set(&DataKey::PendingOwner, &new_owner);
         Self::bump_instance(&env);
-        env.events()
-            .publish(
-                (
-                    events::event_ownership_nominated(&env),
-                    events::event_version_v1(&env),
-                    caller,
-                ),
-                new_owner,
-            );
+        env.events().publish(
+            (
+                events::event_ownership_nominated(&env),
+                events::event_version_v1(&env),
+                caller,
+            ),
+            new_owner,
+        );
         Ok(())
     }
 
@@ -1649,8 +1693,14 @@ impl CalloraVault {
         env.storage().instance().set(&DataKey::Owner, &new_owner);
         env.storage().instance().remove(&DataKey::PendingOwner);
         Self::bump_instance(&env);
-        env.events()
-            .publish((events::event_ownership_accepted(&env), events::event_version_v1(&env), new_owner), ());
+        env.events().publish(
+            (
+                events::event_ownership_accepted(&env),
+                events::event_version_v1(&env),
+                new_owner,
+            ),
+            (),
+        );
         Ok(())
     }
 
@@ -1856,8 +1906,14 @@ impl CalloraVault {
             ),
             env.ledger().timestamp(),
         );
-        env.events()
-            .publish((events::event_vault_paused(&env), events::event_version_v1(&env), caller), ());
+        env.events().publish(
+            (
+                events::event_vault_paused(&env),
+                events::event_version_v1(&env),
+                caller,
+            ),
+            (),
+        );
         Self::bump_instance_ttl(&env);
         Ok(())
     }
@@ -2008,8 +2064,14 @@ impl CalloraVault {
             ),
             env.ledger().timestamp(),
         );
-        env.events()
-            .publish((events::event_upgraded(&env), events::event_version_v1(&env), caller), wasm_hash);
+        env.events().publish(
+            (
+                events::event_upgraded(&env),
+                events::event_version_v1(&env),
+                caller,
+            ),
+            wasm_hash,
+        );
         Self::bump_instance_ttl(&env);
         Ok(())
     }
@@ -2068,6 +2130,22 @@ impl CalloraVault {
         if amount < min_amount {
             return Err(VaultError::BelowMinTransferAmount);
         }
+        let usdc_addr: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::UsdcToken)
+            .ok_or(VaultError::NotInitialized)?;
+        let usdc = token::Client::new(&env, &usdc_addr);
+        let on_ledger = usdc.balance(&env.current_contract_address());
+        let tracked = env
+            .storage()
+            .instance()
+            .get::<_, i128>(&DataKey::Balance)
+            .unwrap_or(0);
+        let surplus = on_ledger.checked_sub(tracked).unwrap_or(0);
+        if amount > surplus {
+            return Err(VaultError::InsufficientBalance);
+        }
         let proposed_at = env.ledger().timestamp();
         let window = timelock::get_timelock_window(&env);
         let execute_after = timelock::saturating_deadline(proposed_at, window)
@@ -2116,7 +2194,7 @@ impl CalloraVault {
     /// - [`VaultError::Unauthorized`] — caller is not admin.
     /// - [`VaultError::ProposalNotFound`] — no pending sweep proposal.
     /// - [`VaultError::TimelockNotExpired`] — timelock still active.
-    /// - [`VaultError::InsufficientBalance`] — on-ledger balance < amount.
+    /// - [`VaultError::InsufficientBalance`] — surplus < amount.
     ///
     /// ### Events
     /// Emits `sweep_executed` with `caller` as topic, then `distribute`.
@@ -2137,7 +2215,14 @@ impl CalloraVault {
             .get(&DataKey::UsdcToken)
             .ok_or(VaultError::NotInitialized)?;
         let usdc = token::Client::new(&env, &usdc_addr);
-        if usdc.balance(&env.current_contract_address()) < proposal.amount {
+        let on_ledger = usdc.balance(&env.current_contract_address());
+        let tracked = env
+            .storage()
+            .instance()
+            .get::<_, i128>(&DataKey::Balance)
+            .unwrap_or(0);
+        let surplus = on_ledger.checked_sub(tracked).unwrap_or(0);
+        if surplus < proposal.amount {
             return Err(VaultError::InsufficientBalance);
         }
 
@@ -2331,8 +2416,14 @@ impl CalloraVault {
                 env.storage().temporary().remove(&key);
             }
             if removed_persistent || removed_temporary {
-                env.events()
-                    .publish((events::event_request_id_pruned(&env), events::event_version_v1(&env), id), ());
+                env.events().publish(
+                    (
+                        events::event_request_id_pruned(&env),
+                        events::event_version_v1(&env),
+                        id,
+                    ),
+                    (),
+                );
             }
         }
 
@@ -2461,8 +2552,15 @@ impl CalloraVault {
                 .set(&StorageKey::AllowedDepositors, &allowlist);
         }
 
-        env.events()
-            .publish((events::event_allowlist_add(&env), events::event_version_v1(&env), caller, depositor), ());
+        env.events().publish(
+            (
+                events::event_allowlist_add(&env),
+                events::event_version_v1(&env),
+                caller,
+                depositor,
+            ),
+            (),
+        );
 
         Ok(())
     }
@@ -2558,8 +2656,14 @@ impl CalloraVault {
             .instance()
             .remove(&StorageKey::AllowedDepositors);
 
-        env.events()
-            .publish((events::event_allowlist_clear(&env), events::event_version_v1(&env), caller), ());
+        env.events().publish(
+            (
+                events::event_allowlist_clear(&env),
+                events::event_version_v1(&env),
+                caller,
+            ),
+            (),
+        );
 
         Ok(())
     }
@@ -2640,7 +2744,12 @@ impl CalloraVault {
         rescue::rescue_funds(&env, &token_address, &to, amount, protected_balance)?;
 
         env.events().publish(
-            (events::event_rescue_funds(&env), events::event_version_v1(&env), caller, token_address),
+            (
+                events::event_rescue_funds(&env),
+                events::event_version_v1(&env),
+                caller,
+                token_address,
+            ),
             (to, amount),
         );
 
@@ -2676,7 +2785,12 @@ impl CalloraVault {
         }
         let prev = limits::set(&env, &token, cap);
         env.events().publish(
-            (events::event_reserve_cap_set(&env), events::event_version_v1(&env), caller, token),
+            (
+                events::event_reserve_cap_set(&env),
+                events::event_version_v1(&env),
+                caller,
+                token,
+            ),
             (prev, cap),
         );
         Self::bump_instance_ttl(&env);

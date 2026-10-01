@@ -113,8 +113,7 @@ impl CalloraRecipient {
         let inst = env.storage().instance();
         inst.set(&StorageKey::Admin, &admin);
         inst.set(&StorageKey::RecipientCount, &0u32);
-        env.events()
-            .publish((events::event_init(&env), admin), ());
+        env.events().publish((events::event_init(&env), admin), ());
         Ok(())
     }
 
@@ -209,10 +208,8 @@ impl CalloraRecipient {
             &count.checked_add(1).ok_or(RecipientError::Overflow)?,
         );
 
-        env.events().publish(
-            (events::event_recipient_registered(&env), name),
-            record,
-        );
+        env.events()
+            .publish((events::event_recipient_registered(&env), name), record);
         Ok(())
     }
 
@@ -251,10 +248,8 @@ impl CalloraRecipient {
         };
         env.storage().persistent().set(&key, &record);
 
-        env.events().publish(
-            (events::event_recipient_updated(&env), name),
-            record,
-        );
+        env.events()
+            .publish((events::event_recipient_updated(&env), name), record);
         Ok(())
     }
 
@@ -278,11 +273,7 @@ impl CalloraRecipient {
     ///
     /// # Events
     /// Emits `"recipient_removed"` with the name as topic.
-    pub fn remove_recipient(
-        env: Env,
-        caller: Address,
-        name: String,
-    ) -> Result<(), RecipientError> {
+    pub fn remove_recipient(env: Env, caller: Address, name: String) -> Result<(), RecipientError> {
         Self::require_admin(&env, &caller)?;
 
         let key = StorageKey::Recipient(name.clone());
@@ -359,10 +350,7 @@ impl CalloraRecipient {
     /// [`RecipientError::NotFound`].
     ///
     /// Pure view: no auth, no storage writes.
-    pub fn get_recipient(
-        env: Env,
-        name: String,
-    ) -> Result<RecipientRecord, RecipientError> {
+    pub fn get_recipient(env: Env, name: String) -> Result<RecipientRecord, RecipientError> {
         Self::admin(&env)?; // ensure initialized
         Self::validate_name(&name)?;
         env.storage()
@@ -377,10 +365,7 @@ impl CalloraRecipient {
     pub fn has_recipient(env: Env, name: String) -> Result<bool, RecipientError> {
         Self::admin(&env)?; // ensure initialized
         Self::validate_name(&name)?;
-        Ok(env
-            .storage()
-            .persistent()
-            .has(&StorageKey::Recipient(name)))
+        Ok(env.storage().persistent().has(&StorageKey::Recipient(name)))
     }
 
     /// Return the total number of registered recipients.

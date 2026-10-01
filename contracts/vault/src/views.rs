@@ -36,7 +36,7 @@
 use soroban_sdk::{contractimpl, Address, Env};
 
 use crate::errors::VaultError;
-use crate::{CalloraVault, CalloraVaultClient, CalloraVaultArgs};
+use crate::{CalloraVault, CalloraVaultArgs, CalloraVaultClient};
 
 /// Read-only pre-flight of [`crate::CalloraVault::deduct`].
 ///

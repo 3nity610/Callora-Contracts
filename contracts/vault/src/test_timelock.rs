@@ -421,7 +421,11 @@ fn cancel_upgrade_removes_proposal() {
 #[test]
 fn propose_sweep_stores_recipient_amount_and_deadline() {
     let env = Env::default();
-    let (_, client, admin, recipient, _) = setup(&env);
+    let (vault_addr, client, admin, recipient, _) = setup(&env);
+    let usdc = client.get_usdc_token();
+    let stellar_admin = token::StellarAssetClient::new(&env, &usdc);
+    stellar_admin.mint(&vault_addr, &1000);
+
     client.propose_sweep(&admin, &recipient, &500i128);
     let p = client.get_pending_sweep().unwrap();
     assert_eq!(p.to, recipient);
@@ -527,7 +531,11 @@ fn propose_sweep_rejects_non_positive_amount() {
 #[test]
 fn cancel_sweep_removes_proposal() {
     let env = Env::default();
-    let (_, client, admin, recipient, _) = setup(&env);
+    let (vault_addr, client, admin, recipient, _) = setup(&env);
+    let usdc = client.get_usdc_token();
+    let stellar_admin = token::StellarAssetClient::new(&env, &usdc);
+    stellar_admin.mint(&vault_addr, &1000);
+
     client.propose_sweep(&admin, &recipient, &500i128);
     client.cancel_sweep(&admin);
     assert!(client.get_pending_sweep().is_none());
@@ -636,7 +644,11 @@ fn propose_upgrade_rejects_timestamp_overflow() {
 #[test]
 fn propose_sweep_rejects_timestamp_overflow() {
     let env = Env::default();
-    let (_, client, admin, recipient, _) = setup(&env);
+    let (vault_addr, client, admin, recipient, _) = setup(&env);
+    let usdc = client.get_usdc_token();
+    let stellar_admin = token::StellarAssetClient::new(&env, &usdc);
+    stellar_admin.mint(&vault_addr, &1000);
+
     env.ledger().set_timestamp(u64::MAX);
     let res = client.try_propose_sweep(&admin, &recipient, &100i128);
     assert_eq!(res.unwrap_err().unwrap(), VaultError::TimelockOverflow);

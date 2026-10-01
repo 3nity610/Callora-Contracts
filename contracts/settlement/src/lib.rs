@@ -1029,6 +1029,9 @@ impl CalloraSettlement {
     /// Admin-only escape hatch to manually credit a developer balance for a
     /// specific token.
     ///
+    /// Note: The admin can invoke this entrypoint directly to credit developer
+    /// balances.
+    ///
     /// This function is designed for operational edge cases where a developer
     /// must be credited outside the normal `receive_payment` flow (e.g.,
     /// off-chain payment reconciliation, dispute resolution). It does **not**
@@ -1726,6 +1729,9 @@ impl CalloraSettlement {
     }
 
     /// Abort with `Unauthorized` unless `caller` is the registered vault or admin.
+    ///
+    /// For details on the caller authorization model, dual-caller access controls,
+    /// and security implications, see [`docs/ACCESS_CONTROL.md`](../../docs/ACCESS_CONTROL.md).
     fn require_authorized_caller(env: Env, caller: Address) {
         let vault = Self::get_vault(env.clone()).unwrap();
         let admin = Self::get_admin(env.clone()).unwrap();
