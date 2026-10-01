@@ -98,6 +98,61 @@ impl CalloraRegistry {
             .map_err(|_| RegistryError::InvalidMetadata)
     }
 
+    /// Shared registration core used by both public entrypoints.
+    ///
+    /// Validates inputs, checks for duplicates, publishes to the catalog, then
+    /// atomically writes the offering record, increments the registered count,
+    /// emits the registration event, and records the admin cooldown timestamp.
+    ///
+    /// Callers are responsible for authentication, admin-equality checks, the
+    /// cooldown gate, and any pre-conditions specific to their variant (e.g.
+    /// the developer balance gate in `register_offering_with_gate`).
+    fn do_register(
+        env: &Env,
+        developer: Address,
+        offering_id: String,
+        metadata: String,
+    ) -> Result<(), RegistryError> {
+        Self::validate_offering_id(&offering_id)?;
+        Self::validate_metadata(&metadata)?;
+
+        let key = StorageKey::Offering(offering_id.clone());
+        if env.storage().persistent().has(&key) {
+            return Err(RegistryError::OfferingAlreadyRegistered);
+        }
+
+        let catalog = Self::catalog(env)?;
+        OfferingCatalogClient::new(env, &catalog).put_offering(
+            &env.current_contract_address(),
+            &offering_id,
+            &metadata,
+        );
+
+        let record = OfferingRecord {
+            offering_id: offering_id.clone(),
+            metadata: metadata.clone(),
+            developer,
+        };
+        env.storage().persistent().set(&key, &record);
+
+        let count: u32 = env
+            .storage()
+            .instance()
+            .get(&StorageKey::RegisteredCount)
+            .ok_or(RegistryError::NotInitialized)?;
+        env.storage().instance().set(
+            &StorageKey::RegisteredCount,
+            &count.checked_add(1).ok_or(RegistryError::Overflow)?,
+        );
+
+        env.events().publish(
+            (events::event_offering_registered(env), offering_id),
+            record,
+        );
+        admin::update_cooldown(env);
+        Ok(())
+    }
+
     /// Register an offering after publishing metadata to the catalog contract.
     ///
     /// Cross-contract interactions happen before any registry persistent write,
@@ -115,51 +170,14 @@ impl CalloraRegistry {
             return Err(RegistryError::Unauthorized);
         }
         admin::require_cooldown(&env)?;
-        Self::validate_offering_id(&offering_id)?;
-        Self::validate_metadata(&metadata)?;
-
-        let key = StorageKey::Offering(offering_id.clone());
-        if env.storage().persistent().has(&key) {
-            return Err(RegistryError::OfferingAlreadyRegistered);
-        }
-
-        let catalog = Self::catalog(&env)?;
-        OfferingCatalogClient::new(&env, &catalog).put_offering(
-            &env.current_contract_address(),
-            &offering_id,
-            &metadata,
-        );
-
-        let record = OfferingRecord {
-            offering_id: offering_id.clone(),
-            metadata: metadata.clone(),
-            developer,
-        };
-        env.storage().persistent().set(&key, &record);
-
-        let count: u32 = env
-            .storage()
-            .instance()
-            .get(&StorageKey::RegisteredCount)
-            .ok_or(RegistryError::NotInitialized)?;
-        env.storage().instance().set(
-            &StorageKey::RegisteredCount,
-            &count.checked_add(1).ok_or(RegistryError::Overflow)?,
-        );
-
-        env.events().publish(
-            (events::event_offering_registered(&env), offering_id),
-            record,
-        );
-        admin::update_cooldown(&env);
-        Ok(())
+        Self::do_register(&env, developer, offering_id, metadata)
     }
 
     /// Register an offering only when the developer's on-ledger token balance
     /// meets `min_balance`, then publish via the catalog contract.
     ///
-    /// Performs the token balance read and catalog publish before persisting
-    /// registry state so callee failures cannot leave partial registrations.
+    /// The balance gate runs before the shared registration logic so that an
+    /// insufficient balance is rejected before any catalog call or state write.
     pub fn register_offering_with_gate(
         env: Env,
         caller: Address,
@@ -175,50 +193,15 @@ impl CalloraRegistry {
             return Err(RegistryError::Unauthorized);
         }
         admin::require_cooldown(&env)?;
-        Self::validate_offering_id(&offering_id)?;
-        Self::validate_metadata(&metadata)?;
 
-        let key = StorageKey::Offering(offering_id.clone());
-        if env.storage().persistent().has(&key) {
-            return Err(RegistryError::OfferingAlreadyRegistered);
-        }
-
+        // Balance gate: reject before any catalog interaction or state write.
         let token_client = token::Client::new(&env, &token);
         let balance = token_client.balance(&developer);
         if balance < min_balance {
             return Err(RegistryError::InsufficientDeveloperBalance);
         }
 
-        let catalog = Self::catalog(&env)?;
-        OfferingCatalogClient::new(&env, &catalog).put_offering(
-            &env.current_contract_address(),
-            &offering_id,
-            &metadata,
-        );
-
-        let record = OfferingRecord {
-            offering_id: offering_id.clone(),
-            metadata: metadata.clone(),
-            developer,
-        };
-        env.storage().persistent().set(&key, &record);
-
-        let count: u32 = env
-            .storage()
-            .instance()
-            .get(&StorageKey::RegisteredCount)
-            .ok_or(RegistryError::NotInitialized)?;
-        env.storage().instance().set(
-            &StorageKey::RegisteredCount,
-            &count.checked_add(1).ok_or(RegistryError::Overflow)?,
-        );
-
-        env.events().publish(
-            (events::event_offering_registered(&env), offering_id),
-            record,
-        );
-        admin::update_cooldown(&env);
-        Ok(())
+        Self::do_register(&env, developer, offering_id, metadata)
     }
 
     /// Return whether `offering_id` has been registered.
