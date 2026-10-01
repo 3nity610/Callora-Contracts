@@ -282,21 +282,33 @@ impl CalloraHot {
     /// # Errors
     /// * [`HotError::Unauthorized`] -- caller is not the current admin.
     /// * [`HotError::NotInitialized`] -- contract not initialized.
+    /// * [`HotError::SameSigner`] -- `new_signer` equals the current signer.
     /// * [`HotError::CooldownActive`] -- a `rotate` ran within the cool-off window.
     ///
     /// # Events
-    /// Emits `action` with `caller` as topic and the `"rotate"` tag as data.
+    /// Emits `signer_rotated` with `caller` as topic and `(old_signer,
+    /// new_signer)` as data.
     pub fn rotate_signer(env: Env, caller: Address, new_signer: Address) -> Result<(), HotError> {
         Self::require_admin(&env, &caller)?;
         let action = Symbol::new(&env, ACTION_ROTATE);
         admin::guard(&env, &action)?;
+
+        let old_signer: Address = env
+            .storage()
+            .instance()
+            .get(&StorageKey::Signer)
+            .ok_or(HotError::NotInitialized)?;
+
+        if old_signer == new_signer {
+            return Err(HotError::SameSigner);
+        }
 
         env.storage()
             .instance()
             .set(&StorageKey::Signer, &new_signer);
 
         env.events()
-            .publish((events::event_action(&env), caller), action);
+            .publish((events::event_signer_rotated(&env), caller), (old_signer, new_signer));
 
         Ok(())
     }

@@ -2,10 +2,11 @@
 //!
 //! Coverage targets: cooldown configuration bounds, per-action isolation,
 //! window enforcement across ledger time, auth/authorization gating, the
-//! two-step admin rotation, and the read-only views.
+//! two-step admin rotation, signer rotation events, and the read-only views.
 
 use crate::admin::{DEFAULT_COOLDOWN_SECS, MAX_COOLDOWN_SECS, MIN_COOLDOWN_SECS};
 use crate::{CalloraHot, CalloraHotClient, HotError, ACTION_PAUSE, ACTION_ROTATE};
+use soroban_sdk::testutils::Events as _;
 use soroban_sdk::testutils::{Address as _, Ledger as _};
 use soroban_sdk::{Address, Env, Symbol};
 
@@ -190,6 +191,47 @@ fn test_per_action_isolation() {
 
     let rotate = Symbol::new(&env, ACTION_ROTATE);
     assert_eq!(client.cooldown_remaining(&rotate), 1000);
+}
+
+#[test]
+fn test_rotate_signer_rejects_same_signer() {
+    let (_env, admin, signer, client) = setup(Some(60));
+    let res = client.try_rotate_signer(&admin, &signer);
+    assert_eq!(res, Err(Ok(HotError::SameSigner)));
+    assert_eq!(client.get_signer(), signer);
+}
+
+#[test]
+fn test_rotate_signer_emits_old_and_new_signer() {
+    let (env, admin, old_signer, client) = setup(Some(60));
+    let new_signer = Address::generate(&env);
+
+    client.rotate_signer(&admin, &new_signer);
+    assert_eq!(client.get_signer(), new_signer);
+
+    let events = env.events().all();
+    let (_, topics, data) = events.last().unwrap();
+    let topic: Symbol = topics.get(0).unwrap().try_into_val(&env).unwrap();
+    assert_eq!(topic, Symbol::new(&env, "signer_rotated"));
+    let (emitted_old, emitted_new): (Address, Address) =
+        data.try_into_val(&env).unwrap();
+    assert_eq!(emitted_old, old_signer);
+    assert_eq!(emitted_new, new_signer);
+}
+
+#[test]
+fn test_rotate_signer_event_payload_matches_storage() {
+    let (env, admin, old_signer, client) = setup(Some(60));
+    let new_signer = Address::generate(&env);
+
+    client.rotate_signer(&admin, &new_signer);
+
+    let events = env.events().all();
+    let (_, _, data) = events.last().unwrap();
+    let (emitted_old, emitted_new): (Address, Address) =
+        data.try_into_val(&env).unwrap();
+    assert_eq!(emitted_old, old_signer);
+    assert_eq!(emitted_new, client.get_signer());
 }
 
 #[test]

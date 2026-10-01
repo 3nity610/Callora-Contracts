@@ -371,6 +371,55 @@ fn test_guarded_actions_require_admin() {
 }
 
 // ===========================================================================
+// Signer rotation events (issue #1181)
+// ===========================================================================
+
+/// Rotating to the current signer is rejected as a no-op.
+#[test]
+fn test_rotate_signer_to_same_signer_rejected() {
+    let (_env, admin, signer, client) = setup(Some(60));
+    let res = client.try_rotate_signer(&admin, &signer);
+    assert_eq!(res, Err(Ok(EscrowError::InvalidInput)));
+    assert_eq!(client.get_signer(), signer);
+}
+
+/// A successful rotation emits a `signer_rotated` event carrying
+/// `(old_signer, new_signer)` as its data payload.
+#[test]
+fn test_rotate_signer_emits_old_and_new_signer() {
+    let (env, admin, old_signer, client) = setup(Some(60));
+    let new_signer = Address::generate(&env);
+
+    client.rotate_signer(&admin, &new_signer);
+    assert_eq!(client.get_signer(), new_signer);
+
+    let events = env.events().all();
+    let (_, topics, data) = events.last().unwrap();
+    assert_eq!(topics, (Symbol::new(&env, "signer_rotated"),).into());
+    let payload: (Address, Address) = data.try_into_val(&env).unwrap();
+    assert_eq!(payload, (old_signer, new_signer));
+}
+
+/// The event payload reflects the actual old signer across multiple rotations.
+#[test]
+fn test_rotate_signer_event_tracks_previous_signer() {
+    let (env, admin, first_signer, client) = setup(Some(60));
+    let second_signer = Address::generate(&env);
+    let third_signer = Address::generate(&env);
+
+    client.rotate_signer(&admin, &second_signer);
+    advance(&env, 60);
+    client.rotate_signer(&admin, &third_signer);
+    assert_eq!(client.get_signer(), third_signer);
+
+    let events = env.events().all();
+    let (_, _, data) = events.last().unwrap();
+    let payload: (Address, Address) = data.try_into_val(&env).unwrap();
+    assert_eq!(payload, (second_signer, third_signer));
+    let _ = first_signer;
+}
+
+// ===========================================================================
 // Two-step admin rotation
 // ===========================================================================
 

@@ -1,8 +1,8 @@
 //! Event topic Symbol constructors for the Callora Escrow contract.
-//!
-//! This module centralises all event topic strings into dedicated functions,
-//! ensuring byte-identity is preserved and preventing accidental topic name
-//! drift across call sites.
+///
+/// This module centralises all event topic strings into dedicated functions,
+/// ensuring byte-identity is preserved and preventing accidental topic name
+/// drift across call sites.
 
 use soroban_sdk::{Env, Symbol};
 
@@ -28,6 +28,16 @@ pub fn event_cooldown_set(env: &Env) -> Symbol {
 /// recording the action tag so indexers can reconstruct the cool-off timeline.
 pub fn event_action(env: &Env) -> Symbol {
     Symbol::new(env, "action")
+}
+
+/// Returns the Symbol for the `"signer_rotated"` event topic.
+///
+/// Emitted when the admin rotates the active signer via
+/// [`crate::CalloraEscrow::rotate_signer`]. The event data carries the
+/// previous and new signer addresses so monitors can alert on unpredictable
+/// signer values without reading contract storage.
+pub fn event_signer_rotated(env: &Env) -> Symbol {
+    Symbol::new(env, "signer_rotated")
 }
 
 /// Returns the Symbol for the `"admin_nominated"` event topic.
@@ -85,37 +95,43 @@ pub fn event_version_v1(env: &Env) -> Symbol {
     Symbol::new(env, "callora.v1")
 }
 
-#[cfg(test)]
-mod tests {
+#config(test)]]mod tests {
     use super::*;
-    use soroban_sdk::Env;
+    use soroban_sdk:Env;
 
     /// Snapshot: proves event_init still maps to exactly the bytes for "init".
     #[test]
     fn test_event_init_bytes() {
         let env = Env::default();
-        assert_eq!(event_init(&env), Symbol::new(&env, "init"));
+        assert_eq(event_init(&env), Symbol::new(&env, "init"));
     }
 
     /// Snapshot: proves event_cooldown_set still maps to exactly the bytes for "cooldown_set".
     #[test]
     fn test_event_cooldown_set_bytes() {
         let env = Env::default();
-        assert_eq!(event_cooldown_set(&env), Symbol::new(&env, "cooldown_set"));
+        assert_eq(event_cooldown_set(&env), Symbol::new(&env, "cooldown_set"));
     }
 
     /// Snapshot: proves event_action still maps to exactly the bytes for "action".
     #[test]
     fn test_event_action_bytes() {
         let env = Env::default();
-        assert_eq!(event_action(&env), Symbol::new(&env, "action"));
+        assert_eq(event_action(&env), Symbol::new(&env, "action"));
+    }
+
+    /// Snapshot: proves event_signer_rotated maps to exactly the bytes for "signer_rotated".
+    #[test]
+    fn test_event_signer_rotated_bytes() {
+        let env = Env::default();
+        assert_eq(event_signer_rotated(&env), Symbol::new(&env, "signer_rotated"));
     }
 
     /// Snapshot: proves event_admin_nominated still maps to exactly the bytes for "admin_nominated".
     #[test]
     fn test_event_admin_nominated_bytes() {
         let env = Env::default();
-        assert_eq!(
+        assert_eq(
             event_admin_nominated(&env),
             Symbol::new(&env, "admin_nominated")
         );
@@ -125,7 +141,7 @@ mod tests {
     #[test]
     fn test_event_admin_accepted_bytes() {
         let env = Env::default();
-        assert_eq!(
+        assert_eq(
             event_admin_accepted(&env),
             Symbol::new(&env, "admin_accepted")
         );
@@ -135,7 +151,7 @@ mod tests {
     #[test]
     fn test_event_asset_approved_bytes() {
         let env = Env::default();
-        assert_eq!(
+        assert_eq(
             event_asset_approved(&env),
             Symbol::new(&env, "asset_approved")
         );
@@ -145,7 +161,7 @@ mod tests {
     #[test]
     fn test_event_asset_removed_bytes() {
         let env = Env::default();
-        assert_eq!(
+        assert_eq(
             event_asset_removed(&env),
             Symbol::new(&env, "asset_removed")
         );
@@ -155,7 +171,7 @@ mod tests {
     #[test]
     fn test_event_escrow_created_bytes() {
         let env = Env::default();
-        assert_eq!(
+        assert_eq(
             event_escrow_created(&env),
             Symbol::new(&env, "escrow_created")
         );
