@@ -2760,6 +2760,12 @@ mod test_idempotency;
 #[cfg(test)]
 mod test_event_schema;
 
+/// #1125: sweep/pause/upgrade lifecycle against the global admin cool-off
+/// (back-to-back matured proposals, boundary, cancel/re-propose, and the
+/// `cancel_sweep` `existing.is_some()` payload). Named `*timelock*` so
+/// `cargo test -p callora-vault timelock` selects it.
+#[cfg(test)]
+mod test_timelock_cooldown;
 #[cfg(test)]
 mod test_admin_transfers;
 
