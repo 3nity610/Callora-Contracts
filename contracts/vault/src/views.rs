@@ -23,7 +23,7 @@
 //! Production callers should still call
 //! [`crate::CalloraVault::get_settlement`] before submitting a real `deduct`.
 
-use soroban_sdk::{contractimpl, Address, Env, Symbol};
+use soroban_sdk::{contractimpl, Address, Env};
 
 use crate::errors::VaultError;
 use crate::{CalloraVault, CalloraVaultClient, CalloraVaultArgs};
@@ -43,8 +43,9 @@ use crate::{CalloraVault, CalloraVaultClient, CalloraVaultArgs};
 ///   does not raise `Unauthorized` for an unknown caller — it reflects what
 ///   the subsequent authorized `deduct` would do.
 /// - `amount`: amount to deduct. Must be positive.
-/// - `request_id`: optional idempotency key. If `Some(id)` and the id is
-///   already in storage, the simulation returns `DuplicateRequestId`.
+/// - `request_id`: optional idempotency key. If `Some(id)` with a non-zero id
+///   that is already in storage, the simulation returns
+///   `DuplicateRequestId`; `Some(0)` means "no idempotency".
 /// - `max_fee_bps`: slippage guard. Same semantics as `deduct`.
 /// - `developer`: developer whose rate-limit bucket is checked.
 ///
@@ -88,7 +89,7 @@ impl CalloraVault {
         env: Env,
         _caller: Address,
         amount: i128,
-        request_id: Option<Symbol>,
+        request_id: Option<u64>,
         max_fee_bps: u32,
         developer: Address,
     ) -> Result<i128, VaultError> {

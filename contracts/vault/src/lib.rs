@@ -34,24 +34,26 @@
 ///
 /// ## Request-ID Idempotency
 ///
-/// `deduct` and `batch_deduct` accept an optional `request_id: Option<Symbol>`.
-/// When `Some(id)` is supplied the contract persists a processed-request marker
-/// in **temporary storage** and rejects any subsequent call that carries the same
-/// `request_id`, returning `VaultError::DuplicateRequestId`.
+/// `deduct` and `batch_deduct` accept a `request_id: u64` idempotency key.
+/// When a **non-zero** id is supplied the contract persists a processed-request
+/// marker and rejects any subsequent call that carries the same `request_id`,
+/// returning `VaultError::DuplicateRequestId`. The marker is written only after
+/// the deduction succeeds, so a replayed backend call is charged exactly once.
 ///
 /// This gives safe **at-least-once retry** semantics: a backend can replay a
 /// failed transaction with the same `request_id` and the contract will either
 /// succeed (first time) or return a deterministic error (duplicate).
 ///
-/// When `request_id` is `None` no deduplication is performed; the call is
-/// treated as a fire-and-forget deduction with no idempotency guarantee.
+/// `request_id == 0` is the documented **"no idempotency" sentinel**: no marker
+/// is written and the id is never deduplicated, so `0` may be reused on every
+/// call. Supply any non-zero id to obtain idempotency.
 ///
 /// ### Retention / TTL
 /// Processed-request markers live in persistent storage and are bumped to
 /// `REQUEST_ID_BUMP_AMOUNT` ledgers on every successful deduct. The threshold
-/// for triggering a bump is `REQUEST_ID_BUMP_THRESHOLD`. Because they are now
-/// persistent, they do not silently archive. To prevent state bloat, an owner
-/// can explicitly prune old markers using `prune_processed_requests`.
+/// for triggering a bump is `REQUEST_ID_BUMP_THRESHOLD`. Because they are
+/// persistent, they do not silently archive; an owner can explicitly prune old
+/// markers using `prune_processed_requests` so an id can be reused.
 use soroban_sdk::{contract, contractimpl, contracttype, Address, BytesN, Env, Symbol, Vec};
 
 pub mod admin;
@@ -95,7 +97,7 @@ pub enum DataKey {
 #[derive(Clone, Debug, PartialEq)]
 pub enum StorageKey {
     UsdcToken,
-    ProcessedRequest(Symbol),
+    ProcessedRequest(u64),
     ReserveCap(Address),
     DeveloperConfig(Address),
     DeveloperState(Address),
@@ -423,6 +425,8 @@ impl CalloraVault {
     /// - `caller` — address initiating the deduction.
     /// - `amount` — amount in USDC stroops; must be within `[min_deposit, max_deduct]`.
     /// - `request_id` — idempotency key forwarded to the settlement contract.
+    ///   A non-zero id is recorded and must be unique; `0` means "no
+    ///   idempotency" and is never deduplicated.
     ///
     /// ### Returns
     /// `Ok(())` on success.
@@ -492,6 +496,14 @@ impl CalloraVault {
             return Err(VaultError::InsufficientBalance);
         }
 
+        // Idempotency guard: reject a replayed request id *before* mutating the
+        // tracked balance, forwarding USDC, or emitting events. A non-zero id
+        // that has already been processed returns `DuplicateRequestId`;
+        // `request_id == 0` is the documented "no idempotency" sentinel.
+        if request_id != 0 {
+            Self::require_not_duplicate(&env, &request_id)?;
+        }
+
         let new_bal = current_bal
             .checked_sub(amount)
             .unwrap_or_else(|| panic!("Math underflow"));
@@ -511,6 +523,13 @@ impl CalloraVault {
 
         let settlement_client = settlement::Client::new(&env, &settlement_addr);
         settlement_client.record_deduction(&amount, &request_id);
+
+        // Record the idempotency marker only after every state mutation and
+        // external call has succeeded. Any earlier failure reverts the whole
+        // transaction, so a failed deduct never marks its request id.
+        if request_id != 0 {
+            Self::mark_request_processed(&env, &request_id);
+        }
         Ok(())
     }
 
@@ -537,7 +556,9 @@ impl CalloraVault {
     /// ### Parameters
     /// - `caller` — address initiating the deductions.
     /// - `items` — vector of `(amount, request_id)` pairs; each amount must be
-    ///   within `[min_deposit, max_deduct]`.
+    ///   within `[min_deposit, max_deduct]`. Non-zero `request_id`s must be
+    ///   unique both against previously-processed ids and within this batch;
+    ///   `0` means "no idempotency" and is never deduplicated.
     ///
     /// ### Returns
     /// `Ok(())` on success.
@@ -621,8 +642,9 @@ impl CalloraVault {
         // item, or a total that exceeds the tracked balance fails the whole call
         // atomically (mirrors `deduct`'s explicit pre-transfer checks).
         let mut total_amount: i128 = 0i128;
+        let mut seen_ids: Vec<u64> = Vec::new(&env);
         for item in items.iter() {
-            let (amount, _request_id) = item;
+            let (amount, request_id) = item;
             if amount <= 0 {
                 return Err(VaultError::AmountNotPositive);
             }
@@ -631,6 +653,17 @@ impl CalloraVault {
             }
             if amount > max_deduct {
                 return Err(VaultError::ExceedsMaxDeduct);
+            }
+            // Idempotency: reject an id already recorded in storage as well as
+            // an id repeated within this same batch. Both checks run before any
+            // mutation so a duplicate fails the whole batch atomically.
+            // `request_id == 0` means "no idempotency" and is never recorded.
+            if request_id != 0 {
+                Self::require_not_duplicate(&env, &request_id)?;
+                if seen_ids.contains(&request_id) {
+                    return Err(VaultError::DuplicateRequestId);
+                }
+                seen_ids.push_back(request_id);
             }
             total_amount = total_amount
                 .checked_add(amount)
@@ -670,6 +703,12 @@ impl CalloraVault {
             );
 
             settlement_client.record_deduction(&amount, &request_id);
+
+            // Persist the idempotency marker only after this item's transfer
+            // and settlement call succeed; a later failure reverts the batch.
+            if request_id != 0 {
+                Self::mark_request_processed(&env, &request_id);
+            }
         }
         env.storage().instance().set(&DataKey::Balance, &new_bal);
         Ok(())
@@ -2175,15 +2214,15 @@ impl CalloraVault {
 
     /// Return `true` if `request_id` has already been processed (marker present
     /// in persistent storage, or temporary storage for legacy markers).
-    pub fn is_request_processed(env: Env, request_id: Symbol) -> bool {
+    pub fn is_request_processed(env: Env, request_id: u64) -> bool {
         let key = StorageKey::ProcessedRequest(request_id);
         env.storage().persistent().has(&key) || env.storage().temporary().has(&key)
     }
 
     /// Check that `request_id` has NOT been processed yet.
     /// Returns `VaultError::DuplicateRequestId` if the marker exists.
-    pub(crate) fn require_not_duplicate(env: &Env, request_id: &Symbol) -> Result<(), VaultError> {
-        let key = StorageKey::ProcessedRequest(request_id.clone());
+    pub(crate) fn require_not_duplicate(env: &Env, request_id: &u64) -> Result<(), VaultError> {
+        let key = StorageKey::ProcessedRequest(*request_id);
         if env.storage().persistent().has(&key) || env.storage().temporary().has(&key) {
             return Err(VaultError::DuplicateRequestId);
         }
@@ -2191,8 +2230,8 @@ impl CalloraVault {
     }
 
     /// Persist a processed-request marker in persistent storage and set its TTL.
-    fn mark_request_processed(env: &Env, request_id: &Symbol) {
-        let key = StorageKey::ProcessedRequest(request_id.clone());
+    fn mark_request_processed(env: &Env, request_id: &u64) {
+        let key = StorageKey::ProcessedRequest(*request_id);
         env.storage().persistent().set(&key, &true);
         env.storage().persistent().extend_ttl(
             &key,
@@ -2210,20 +2249,20 @@ impl CalloraVault {
     ///
     /// ### Parameters
     /// - `caller` — must be the vault owner.
-    /// - `ids` — vector of request-id symbols to prune.
+    /// - `ids` — vector of request-id values to prune.
     ///
     /// ### Events
     /// Emits `request_id_pruned` for each successfully pruned marker.
     pub fn prune_processed_requests(
         env: Env,
         caller: Address,
-        ids: Vec<Symbol>,
+        ids: Vec<u64>,
     ) -> Result<(), VaultError> {
         caller.require_auth();
         Self::require_owner(env.clone(), caller)?;
 
         for id in ids.iter() {
-            let key = StorageKey::ProcessedRequest(id.clone());
+            let key = StorageKey::ProcessedRequest(id);
             let removed_persistent = env.storage().persistent().has(&key);
             let removed_temporary = env.storage().temporary().has(&key);
             if removed_persistent {
@@ -2557,6 +2596,11 @@ mod test_value_conservation;
 
 #[cfg(test)]
 mod test_recovery_idempotency;
+
+/// Request-id idempotency coverage for `deduct` / `batch_deduct`:
+/// duplicate rejection, within-batch dedup, marker views, and pruning.
+#[cfg(test)]
+mod test_idempotency;
 
 /// Holistic event-shape audit: drives every vault function that emits an event
 /// and asserts the published topic list matches EVENT_SCHEMA.md.  Catches
