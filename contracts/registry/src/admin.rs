@@ -2,9 +2,17 @@
 //!
 //! Implements a per-developer cool-off window between registrations to prevent
 //! rapid abuse by the same developer while allowing different developers to
-//! register concurrently. Every admin-gated entrypoint in
-//! [`crate::CalloraRegistry`] must call [`require_cooldown`] before
-//! mutating state and [`update_cooldown`] after a successful mutation.
+//! register concurrently. Every *registration* entrypoint in
+//! [`crate::CalloraRegistry`] must call [`require_cooldown`] before mutating
+//! state and [`update_cooldown`] after a successful mutation.
+//!
+//! The offering lifecycle operations added alongside registration
+//! ([`crate::CalloraRegistry::update_offering_metadata`],
+//! [`crate::CalloraRegistry::transfer_offering`] and
+//! [`crate::CalloraRegistry::deregister_offering`]) are admin/developer-gated
+//! but deliberately not throttled by this window: the cooldown rate-limits how
+//! often an offering is *published*, so an already-registered listing can be
+//! corrected or retired immediately instead of waiting out the window.
 //!
 //! # Storage
 //!
